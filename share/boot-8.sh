@@ -402,7 +402,6 @@ export default function Home() {
         <h2 className="text-2xl font-semibold mb-2">Next Steps</h2>
         <ol className="list-decimal list-inside">
           <li>Set env vars (e.g., NEXT_PUBLIC_API_URL).</li>
-          <li>Run <code>npm run format</code> to apply Prettier.</li>
           <li>Run <code>npm test</code> to see the example test pass.</li>
           <li>Start dev server: <code>npm run dev</code>.</li>
           <li>Add pages under <code>src/app/</code> and UI components under <code>src/components/</code>.</li>
@@ -424,10 +423,10 @@ run_with_spinner "Installing frontend dependencies" \
 
 run_with_spinner "Installing frontend dev tooling" \
 npm install -D \
-  jest \
+  jest jest-environment-jsdom jest-axe\
   @testing-library/react \
   @testing-library/jest-dom \
-  @types/jest \
+  @types/jest @types/jest-axe \
   prettier
 
 # ---- jest config
@@ -451,16 +450,34 @@ EOF
 
 # ---- example test
 mkdir -p src/__tests__
-cat > src/__tests__/example.test.ts <<'EOF'
-import { render, screen } from '@testing-library/react'
-import Home from '@/app/page'
+cat > src/__tests__/example.test.tsx <<'EOF'
+import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import Home from '@/app/page';
 
-test('renders welcome message', () => {
-  render(<Home />)
+test('renders main heading', () => {
+  render(<Home />);
   expect(
-    screen.getByRole('heading', { name: /welcome/i })
-  ).toBeInTheDocument()
-})
+    screen.getByRole('heading', {
+      name: /welcome to the project starter kit!/i,
+    }),
+  ).toBeInTheDocument();
+});
+EOF
+
+# ---- accessibility test
+cat > src/__tests__/accessibility.test.tsx <<'EOF'
+import { render } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import Home from '@/app/page';
+
+expect.extend(toHaveNoViolations);
+
+test('Home page has no accessibility violations', async () => {
+  const { container } = render(<Home />);
+  const results = await axe(container);
+  expect(results).toHaveNoViolations();
+});
 EOF
 
 # ---- Axios client
