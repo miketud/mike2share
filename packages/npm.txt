@@ -1,0 +1,26 @@
+# Core animation libraries
+npm i framer-motion                # React‑friendly declarative animation
+npm i gsap @gsap/react             # Core GSAP engine + React helper (optional)
+npm i gsap@npm:@gsap/scrolltrigger # ScrollTrigger plugin (if you need scroll‑linked timelines)
+
+# Gesture / physics helpers (often paired with Framer or GSAP)
+npm i react-use-gesture            # High‑level drag, pinch, wheel, etc.
+npm i react-spring                 # Physics‑based springs (alternative to Framer Motion)
+
+# Viewport / scroll utilities
+npm i react-intersection-observer  # IntersectionObserver hook (on‑enter animations)
+npm i react-scroll-parallax        # Simple declarative parallax components
+# (optional) smooth‑scroll alternative
+npm i locomotive-scroll react-locomotive-scroll
+
+# Simple CSS‑transition helpers (if you need lightweight enter/exit)
+npm i react-transition-group
+
+# Lottie (vector‑based animation)
+npm i lottie-react
+
+# Misc small helpers
+npm i react-tilt                  # Hover‑tilt 3D effect
+npm i react-animate-height        # Height‑based expand/collapse
+npm i react-icons                 # Icon set (used in examples, optional)
+
