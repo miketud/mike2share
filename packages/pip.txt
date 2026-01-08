@@ -1,0 +1,6 @@
+AI Readiness:
+
+pip install pgvector openai langchain-core \
+            sentence-transformers \
+            numpy pandas tiktoken scikit-learn \
+            tenacity structlog
