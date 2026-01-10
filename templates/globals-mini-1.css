@@ -1,5 +1,5 @@
-/* ============================================
-   Theme Variables
+/* ==========================================
+   Theme Variables – light mode is the default
    ============================================ */
 :root {
   --bg: #ffffff;
@@ -10,26 +10,9 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #020617;
-    --fg: #f8fafc;
-    --muted: #94a3b8;
-    --border: #1e293b;
-    --primary: #60a5fa;
-    color-scheme: dark;
-  }
-}
-
-[data-theme="light"] {
-  --bg: #ffffff;
-  --fg: #0f172a;
-  --muted: #64748b;
-  --border: #e2e8f0;
-  --primary: #3b82f6;
-  color-scheme: light;
-}
-
+/* -----------------------------------------------------------------
+   Manual dark‑mode override – apply by adding data-theme="dark"
+   ----------------------------------------------------------------- */
 [data-theme="dark"] {
   --bg: #020617;
   --fg: #f8fafc;
@@ -37,6 +20,16 @@
   --border: #1e293b;
   --primary: #60a5fa;
   color-scheme: dark;
+}
+
+/* Optional explicit light‑mode selector (kept for completeness) */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #3b82f6;
+  color-scheme: light;
 }
 
 /* ============================================

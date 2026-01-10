@@ -1,0 +1,591 @@
+# Client-Server Architecture (PC → Workstation)
+
+## Clear Separation
+
+```
+┌─────────────────────────────────────┐
+│     Your PC (Development)           │
+├─────────────────────────────────────┤
+│  ✅ Frontend (Next.js)     :3000    │
+│  ✅ Backend (FastAPI)      :8000    │
+│  ✅ PostgreSQL             :5432    │
+│  ✅ Code editing                    │
+│  ✅ Git repository                  │
+│  ✅ Development tools               │
+└─────────────────────────────────────┘
+              │
+      Tailscale VPN
+       (API calls)
+              │
+┌─────────────────────────────────────┐
+│   GPU Workstation (Compute Only)    │
+├─────────────────────────────────────┤
+│  ✅ vLLM              :8001         │
+│  ✅ Qdrant            :6333         │
+│  ✅ Embedding Service :8002         │
+│  ✅ Celery Workers    (background)  │
+│  ✅ Redis             :6379         │
+│                                      │
+│  ❌ No frontend                     │
+│  ❌ No main database                │
+│  ❌ No business logic               │
+└─────────────────────────────────────┘
+```
+
+---
+
+## Responsibilities
+
+### **Your PC (Client)**
+**All Development**:
+- Code in VS Code (local files on PC)
+- Git operations
+- Run Next.js dev server
+- Run FastAPI dev server
+- PostgreSQL with all application data
+- User interface
+
+**Orchestration**:
+- Receives user requests
+- Sends compute tasks to workstation
+- Waits for results
+- Stores results in local PostgreSQL
+- Renders UI
+
+### **Workstation (Compute Server)**
+**Only GPU/CPU Tasks**:
+- LLM inference (vLLM)
+- Text embeddings (sentence-transformers)
+- Vector search (Qdrant)
+- Fine-tuning jobs (Celery + Axolotl)
+- No application state
+- No user data storage (except vectors)
+
+---
+
+## Project Structure
+
+### **On Your PC**
+```
+~/Projects/rag-platform/
+├── frontend/              # Next.js (runs locally :3000)
+├── backend/               # FastAPI (runs locally :8000)
+│   ├── main.py
+│   ├── routes/
+│   ├── models.py         # SQLAlchemy
+│   ├── services/
+│   │   ├── workstation_client.py  # HTTP client for workstation
+│   │   ├── document.py
+│   │   └── query.py
+│   └── config.py
+├── alembic/              # DB migrations
+├── .env                  # Points to workstation Tailscale IPs
+├── docker-compose.yml    # Only: postgres, frontend, backend
+└── README.md
+```
+
+### **On Workstation**
+```
+~/gpu-services/
+├── docker-compose.yml    # Only GPU services
+├── embedding-service/
+│   ├── Dockerfile
+│   └── main.py          # FastAPI wrapper for sentence-transformers
+├── celery-worker/
+│   ├── Dockerfile
+│   └── tasks.py         # Fine-tuning tasks
+└── .env
+```
+
+---
+
+## Configuration
+
+### **PC Environment (.env)**
+```bash
+# Local services
+DATABASE_URL=postgresql://user:pass@localhost:5432/ragdb
+FRONTEND_URL=http://localhost:3000
+
+# Workstation services (Tailscale IPs)
+WORKSTATION_VLLM=http://100.x.x.x:8001/v1
+WORKSTATION_QDRANT_HOST=100.x.x.x
+WORKSTATION_QDRANT_PORT=6333
+WORKSTATION_EMBEDDING=http://100.x.x.x:8002
+WORKSTATION_CELERY_BROKER=redis://100.x.x.x:6379/0
+
+# Feature flags
+GPU_AVAILABLE=true  # Set to false when workstation down
+```
+
+### **Workstation Environment (.env)**
+```bash
+# Only need service configs
+CUDA_VISIBLE_DEVICES=0,1,2
+MODEL_PATH=/models
+```
+
+---
+
+## Backend Communication Layer
+
+### **Workstation Client (on PC)**
+```python
+# backend/services/workstation_client.py
+import httpx
+from typing import Optional
+from config import settings
+
+class WorkstationClient:
+    def __init__(self):
+        self.vllm_url = settings.WORKSTATION_VLLM
+        self.embedding_url = settings.WORKSTATION_EMBEDDING
+        self.available = settings.GPU_AVAILABLE
+    
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Send embedding request to workstation"""
+        if not self.available:
+            raise Exception("Workstation not available")
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.embedding_url}/encode",
+                json={"texts": texts, "batch_size": 256}
+            )
+            return response.json()["embeddings"]
+    
+    async def generate_text(self, prompt: str, max_tokens: int = 512) -> str:
+        """Send LLM generation request to workstation"""
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.vllm_url}/completions",
+                json={
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.7
+                }
+            )
+            return response.json()["choices"][0]["text"]
+    
+    async def search_vectors(self, query_vector: list[float], top_k: int = 5):
+        """Query Qdrant on workstation"""
+        from qdrant_client import QdrantClient
+        
+        client = QdrantClient(
+            host=settings.WORKSTATION_QDRANT_HOST,
+            port=settings.WORKSTATION_QDRANT_PORT
+        )
+        
+        results = client.search(
+            collection_name="documents",
+            query_vector=query_vector,
+            limit=top_k
+        )
+        return results
+
+workstation = WorkstationClient()
+```
+
+### **FastAPI Routes (on PC)**
+```python
+# backend/routes/query.py
+from fastapi import APIRouter, HTTPException
+from services.workstation_client import workstation
+from models import Query
+from database import SessionLocal
+
+router = APIRouter()
+
+@router.post("/query")
+async def handle_query(query: str):
+    db = SessionLocal()
+    
+    try:
+        # 1. Embed query (workstation GPU)
+        query_embedding = await workstation.embed_texts([query])
+        
+        # 2. Search vectors (workstation Qdrant)
+        results = await workstation.search_vectors(query_embedding[0], top_k=5)
+        
+        # 3. Retrieve chunk text from local PostgreSQL
+        chunk_ids = [r.id for r in results]
+        chunks = db.query(Chunk).filter(Chunk.vector_id.in_(chunk_ids)).all()
+        
+        # 4. Build prompt
+        context = "\n\n".join([c.text for c in chunks])
+        prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+        
+        # 5. Generate answer (workstation GPU)
+        answer = await workstation.generate_text(prompt, max_tokens=512)
+        
+        # 6. Log query in local PostgreSQL
+        query_log = Query(
+            query_text=query,
+            answer=answer,
+            chunks_used=chunk_ids
+        )
+        db.add(query_log)
+        db.commit()
+        
+        return {
+            "query": query,
+            "answer": answer,
+            "sources": [{"id": c.id, "text": c.text[:100]} for c in chunks]
+        }
+    
+    finally:
+        db.close()
+```
+
+### **Document Processing (on PC)**
+```python
+# backend/routes/documents.py
+from fastapi import APIRouter, UploadFile
+from services.workstation_client import workstation
+from unstructured.partition.auto import partition
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+router = APIRouter()
+
+@router.post("/documents/upload")
+async def upload_document(file: UploadFile):
+    db = SessionLocal()
+    
+    # 1. Parse document locally (CPU task on PC)
+    content = await file.read()
+    elements = partition(file=content)
+    text = "\n".join([e.text for e in elements])
+    
+    # 2. Store document in local PostgreSQL
+    doc = Document(filename=file.filename, content=text)
+    db.add(doc)
+    db.commit()
+    
+    # 3. Chunk locally (PC CPU)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=50)
+    chunks = splitter.split_text(text)
+    
+    # 4. Send chunks to workstation for embedding (GPU)
+    embeddings = await workstation.embed_texts(chunks)
+    
+    # 5. Store vectors in workstation Qdrant
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct
+    
+    qdrant = QdrantClient(
+        host=settings.WORKSTATION_QDRANT_HOST,
+        port=settings.WORKSTATION_QDRANT_PORT
+    )
+    
+    points = [
+        PointStruct(
+            id=i,
+            vector=emb,
+            payload={"document_id": doc.id, "chunk_index": i}
+        )
+        for i, emb in enumerate(embeddings)
+    ]
+    
+    qdrant.upsert(collection_name="documents", points=points)
+    
+    # 6. Store chunk metadata in local PostgreSQL
+    for i, chunk_text in enumerate(chunks):
+        chunk = Chunk(
+            document_id=doc.id,
+            text=chunk_text,
+            vector_id=str(i),
+            position=i
+        )
+        db.add(chunk)
+    
+    db.commit()
+    db.close()
+    
+    return {
+        "document_id": doc.id,
+        "chunks_created": len(chunks),
+        "status": "embedded"
+    }
+```
+
+---
+
+## Workstation Services
+
+### **Docker Compose (Workstation Only)**
+```yaml
+# ~/gpu-services/docker-compose.yml on workstation
+version: '3.8'
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=1,2
+    command: >
+      --model /models/gpt-oss-120b
+      --tensor-parallel-size 2
+      --host 0.0.0.0
+      --port 8000
+    ports:
+      - "8001:8000"
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+
+  embedding-service:
+    build: ./embedding-service
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+    ports:
+      - "8002:8000"
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  celery-worker:
+    build: ./celery-worker
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+```
+
+### **Embedding Service (Workstation)**
+```python
+# ~/gpu-services/embedding-service/main.py
+from fastapi import FastAPI
+from sentence_transformers import SentenceTransformer
+from pydantic import BaseModel
+
+app = FastAPI()
+
+# Load model on GPU at startup
+model = SentenceTransformer('BAAI/bge-large-en-v1.5', device='cuda')
+
+class EmbedRequest(BaseModel):
+    texts: list[str]
+    batch_size: int = 256
+
+@app.post("/encode")
+async def encode(request: EmbedRequest):
+    embeddings = model.encode(
+        request.texts,
+        batch_size=request.batch_size,
+        show_progress_bar=False,
+        convert_to_tensor=True
+    )
+    return {
+        "embeddings": embeddings.cpu().tolist(),
+        "model": "bge-large-en-v1.5",
+        "dimension": len(embeddings[0])
+    }
+
+@app.get("/health")
+async def health():
+    return {"status": "ready", "gpu": "cuda", "model_loaded": True}
+```
+
+---
+
+## PC Docker Compose
+
+### **Local Services Only (PC)**
+```yaml
+# ~/Projects/rag-platform/docker-compose.yml on PC
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: ragdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    env_file: .env
+    depends_on:
+      - postgres
+    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    command: npm run dev
+```
+
+---
+
+## Development Workflow
+
+### **Day-to-Day**
+```bash
+# On PC
+cd ~/Projects/rag-platform
+
+# Start local services
+docker-compose up -d
+
+# Or run natively
+# Terminal 1: Backend
+cd backend
+uvicorn main:app --reload
+
+# Terminal 2: Frontend
+cd frontend
+npm run dev
+
+# Browser: http://localhost:3000
+# FastAPI docs: http://localhost:8000/docs
+```
+
+### **Making API Calls**
+```bash
+# User uploads document in browser
+# → Frontend sends to localhost:8000/documents/upload
+# → Backend parses locally
+# → Backend sends embeddings request to workstation:8002
+# → Backend stores vectors in workstation Qdrant
+# → Backend stores metadata in local PostgreSQL
+# → Returns success to frontend
+```
+
+---
+
+## Fallback When Workstation Down
+
+### **Mock Mode**
+```python
+# backend/services/workstation_client.py
+class WorkstationClient:
+    async def embed_texts(self, texts: list[str]):
+        if not self.available:
+            # Fallback to small CPU model on PC
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer('all-MiniLM-L6-v2')  # 80MB, CPU
+            return model.encode(texts).tolist()
+        
+        # Normal workstation call
+        ...
+    
+    async def generate_text(self, prompt: str, max_tokens: int = 512):
+        if not self.available:
+            # Return mock response
+            return f"[MOCK - Workstation unavailable] Response would be generated for: {prompt[:50]}..."
+        
+        # Normal workstation call
+        ...
+```
+
+### **Toggle in .env**
+```bash
+# When workstation down
+GPU_AVAILABLE=false
+
+# Backend automatically uses fallbacks
+# Development continues on PC
+```
+
+---
+
+## Data Flow Example
+
+### **User Query: "What are tax benefits?"**
+
+```
+1. Browser → localhost:3000 (Next.js)
+   ↓
+2. Next.js → localhost:8000/query (FastAPI on PC)
+   ↓
+3. FastAPI → 100.x.x.x:8002/encode (Workstation GPU)
+   ← Returns: [0.123, 0.456, ...] (embedding)
+   ↓
+4. FastAPI → 100.x.x.x:6333/search (Workstation Qdrant)
+   ← Returns: [chunk_id_42, chunk_id_108, ...]
+   ↓
+5. FastAPI → localhost:5432 (Local PostgreSQL)
+   Query: SELECT text FROM chunks WHERE vector_id IN (...)
+   ← Returns: chunk texts
+   ↓
+6. FastAPI builds prompt with chunks
+   ↓
+7. FastAPI → 100.x.x.x:8001/completions (Workstation vLLM)
+   ← Returns: Generated answer
+   ↓
+8. FastAPI stores query+answer in PostgreSQL
+   ↓
+9. FastAPI → Next.js (JSON response)
+   ↓
+10. Browser displays answer to user
+```
+
+---
+
+## Advantages
+
+✅ **PC independence**: Code, develop, debug locally  
+✅ **Workstation = utility**: Only for compute-heavy tasks  
+✅ **Network resilience**: Works with mocks if workstation down  
+✅ **Simple deployment**: PC services always local, workstation services always remote  
+✅ **Cost effective**: Workstation can be powered down when not needed  
+✅ **Clean separation**: Business logic on PC, compute on workstation  
+
+---
+
+## TL;DR
+
+**PC (Your Development Machine)**:
+- All code (edit locally in VS Code)
+- Frontend server (Next.js :3000)
+- Backend server (FastAPI :8000)
+- PostgreSQL (application data)
+- Sends HTTP requests to workstation for GPU tasks
+
+**Workstation (Compute Server)**:
+- vLLM (LLM inference)
+- Qdrant (vector search)
+- Embedding service (GPU)
+- Celery workers (fine-tuning)
+- Redis (task queue)
+- Receives HTTP requests, returns results
+
+**Your PC orchestrates, workstation computes.**
+
+**Ready to set this up or need clarification on any part?**
