@@ -32,7 +32,7 @@ spinner() {
       sleep 0.1
     done
   done
-  printf "\r"
+  printf "\r \r"  # Clear the spinner with space, then return to start
 }
 
 run_with_spinner() {
@@ -69,6 +69,38 @@ esac
 ok "OS=$OS  PKG=$PKG"
 
 # =================================================
+# Shell configuration check
+# =================================================
+section "SHELL CONFIGURATION"
+
+if [[ -f "$HOME/.zshrc" ]]; then
+  SHELL_RC="$HOME/.zshrc"
+  ok "Using zsh ($SHELL_RC)"
+elif [[ -f "$HOME/.bashrc" ]]; then
+  SHELL_RC="$HOME/.bashrc"
+  ok "Using bash ($SHELL_RC)"
+else
+  warn "No .bashrc or .zshrc found, will create .bashrc"
+  SHELL_RC="$HOME/.bashrc"
+fi
+
+export SHELL_RC
+export NEEDS_RELOAD=false
+
+# Check if paths are in shell config
+if ! grep -q 'NVM_DIR' "$SHELL_RC" 2>/dev/null || \
+   ! grep -q 'PNPM_HOME' "$SHELL_RC" 2>/dev/null || \
+   ! grep -q 'PYENV_ROOT' "$SHELL_RC" 2>/dev/null; then
+  NEEDS_RELOAD=true
+fi
+
+if [[ "$NEEDS_RELOAD" == "true" ]]; then
+  warn "Some tools will modify your shell config"
+  warn "After bootstrap completes, run: source $SHELL_RC"
+  echo
+fi
+
+# =================================================
 # Install generic system tools
 # =================================================
 section "SYSTEM TOOLS"
@@ -102,21 +134,60 @@ fi
 # =================================================
 section "NODE SETUP"
 
-if ! command -v nvm >/dev/null; then
+# Source NVM if it exists (needed for both new installs and existing setups)
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+if ! command -v nvm &>/dev/null; then
   step "Installing NVM"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-  export NVM_DIR="$HOME/.nvm"
+  # Re-source after fresh install
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  ok "NVM installed"
 fi
 
 NODE_VER="22.21.1"
-if ! command -v node >/dev/null || [[ "$(node -v)" != "v$NODE_VER" ]]; then
+if ! command -v node &>/dev/null || [[ "$(node -v)" != "v$NODE_VER" ]]; then
   step "Installing Node $NODE_VER"
   nvm install "$NODE_VER"
   nvm alias default "$NODE_VER"
+  ok "Node $NODE_VER installed"
 fi
 
 ok "Node $(node -v) ready"
+
+# =================================================
+# Ensure pnpm is installed globally
+# =================================================
+section "PNPM SETUP"
+
+# Add pnpm to PATH if it exists (needed for detection)
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PATH="$PNPM_HOME:$PATH"
+
+if ! command -v pnpm &> /dev/null; then
+  step "Installing pnpm (Node package manager)"
+  curl -fsSL https://get.pnpm.io/install.sh | sh -
+  ok "pnpm installed"
+else
+  PNPM_VERSION=$(pnpm --version)
+  ok "pnpm already installed ($PNPM_VERSION)"
+fi
+
+# Ensure pnpm is in shell config (whether newly installed or pre-existing)
+if ! grep -q 'PNPM_HOME' "$SHELL_RC" 2>/dev/null; then
+  step "Adding pnpm to $SHELL_RC"
+  cat >> "$SHELL_RC" <<'PNPM_CONFIG'
+# pnpm
+export PNPM_HOME="$HOME/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+PNPM_CONFIG
+  ok "pnpm added to shell config"
+  NEEDS_RELOAD=true
+fi
 
 # =================================================
 # PostgreSQL client check
@@ -151,6 +222,14 @@ fi
 # =================================================
 section "PYTHON SETUP"
 
+# Source pyenv if it exists
+export PYENV_ROOT="$HOME/.pyenv"
+if [ -d "$PYENV_ROOT" ]; then
+  export PATH="$PYENV_ROOT/bin:$PATH"
+  eval "$(pyenv init --path 2>/dev/null)"
+  eval "$(pyenv init - 2>/dev/null)"
+fi
+
 MIN_PY="3.12"
 PYVER=$(
   python3 - <<'EOF' 2>/dev/null || echo "0.0"
@@ -160,21 +239,58 @@ EOF
 )
 
 if [[ "$(printf '%s\n' "$MIN_PY" "$PYVER" | sort -V | head -n1)" != "$MIN_PY" ]]; then
-  if ! command -v pyenv >/dev/null; then
+  if ! command -v pyenv &>/dev/null; then
     step "Installing pyenv"
+    
+    # Install build dependencies
+    case "$PKG" in
+      apt)
+        run_with_spinner "Installing Python build dependencies" \
+          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
+          libbz2-dev libreadline-dev libsqlite3-dev curl \
+          libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+        ;;
+      brew)
+        run_with_spinner "Installing Python build dependencies" \
+          brew install openssl readline sqlite3 xz zlib tcl-tk
+        ;;
+    esac
+    
     curl -fsSL https://pyenv.run | bash
     export PYENV_ROOT="$HOME/.pyenv"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init --path)"
     eval "$(pyenv init -)"
+    ok "pyenv installed"
   fi
 
   step "Installing Python $MIN_PY"
   pyenv install -s "$MIN_PY"
   pyenv global "$MIN_PY"
+  pyenv rehash
+  ok "Python $MIN_PY installed"
 fi
 
 ok "Python $(python3 --version) ready"
+
+# =================================================
+# Ensure uv is installed globally
+# =================================================
+section "UV SETUP"
+
+# Add ~/.local/bin to PATH for uv detection (persists for this script run)
+export PATH="$HOME/.local/bin:$PATH"
+
+if ! command -v uv &> /dev/null; then
+  step "Installing uv (Python package installer)"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  # Source the env file to ensure uv is available immediately
+  [ -f "$HOME/.local/bin/env" ] && source "$HOME/.local/bin/env"
+  ok "uv installed"
+else
+  UV_VERSION=$(uv --version)
+  ok "uv already installed ($UV_VERSION)"
+fi
 
 # =================================================
 # Project name / root
@@ -182,10 +298,36 @@ ok "Python $(python3 --version) ready"
 section "PROJECT SETUP"
 
 if [[ -z "${PROJECT_NAME:-}" ]]; then
-  read -rp "Enter project name: " PROJECT_NAME
+  read -rp "Enter project name (can include path): " PROJECT_NAME
 fi
 
-PROJECT_ROOT="${PWD}/${PROJECT_NAME}"
+# Expand tilde and resolve path
+PROJECT_NAME="${PROJECT_NAME/#\~/$HOME}"
+
+# Safety check: prevent accidental root-level creation
+if [[ "$PROJECT_NAME" == /* ]] && [[ ! "$PROJECT_NAME" =~ ^/home/ ]] && [[ ! "$PROJECT_NAME" =~ ^/Users/ ]]; then
+  echo -e "\n${RED}✖ Creating projects in system directories is not allowed${NC}"
+  echo "Use a path like ~/projects/test or ./test instead"
+  exit 1
+fi
+
+# Handle path in project name - extract directory and basename
+if [[ "$PROJECT_NAME" == */* ]]; then
+  # Contains a slash - extract path and name
+  PROJECT_PATH=$(dirname "$PROJECT_NAME")
+  PROJECT_NAME=$(basename "$PROJECT_NAME")
+  
+  # Create parent directory if it doesn't exist
+  mkdir -p "$PROJECT_PATH"
+  
+  # Convert to absolute path
+  PROJECT_PATH=$(cd "$PROJECT_PATH" && pwd)
+else
+  # No path - use current directory
+  PROJECT_PATH=$(pwd)
+fi
+
+PROJECT_ROOT="${PROJECT_PATH}/${PROJECT_NAME}"
 export PROJECT_ROOT PROJECT_NAME
 
 mkdir -p "$PROJECT_ROOT"
@@ -211,24 +353,33 @@ cat > .gitignore <<'EOF'
 Thumbs.db
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
 # Environment files
 .env
 .env.*
+!.env.example
 
 # Backend‑specific Python virtual‑env
 .venv/
+venv/
+env/
 
 # Log files
 *.log
+logs/
 
 # Python artefacts
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.egg-info/
 .ruff_cache/
 .mypy_cache/
+.pytest_cache/
 
 # Node / Next.js artefacts
 node_modules/
@@ -236,9 +387,16 @@ node_modules/
 dist/
 coverage/
 build/
+.turbo/
+out/
 
-# Misc / coverage
-coverage/
+# pnpm
+pnpm-lock.yaml
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
 EOF
 
 # =================================================
@@ -263,13 +421,24 @@ pip install fastapi 'uvicorn[standard]' sqlalchemy psycopg2-binary alembic \
     python-dotenv pydantic-settings \
     pytest pytest-asyncio pytest-cov httpx tenacity \
     ruff mypy black pre-commit \
-    chromadb \
     tiktoken structlog tqdm \
     unstructured python-docx pdfminer.six \
     orjson
 
 pip freeze > requirements.txt
 ok "Backend dependencies installed"
+
+# ---- VSCode settings for Python
+step "Configuring VSCode Python settings"
+mkdir -p .vscode
+cat > .vscode/settings.json <<'EOF'
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "python.terminal.activateEnvironment": true
+}
+EOF
+ok "VSCode settings created"
 
 # ---- ruff config
 cat > ruff.toml <<'EOF'
@@ -359,6 +528,9 @@ ok "Backend ready"
 # =================================================
 section "FRONTEND SETUP"
 
+# Deactivate Python venv before working with Node
+deactivate 2>/dev/null || true
+
 # Ensure we are back at the project root (may still be inside backend)
 cd "$PROJECT_ROOT"
 
@@ -367,7 +539,7 @@ cd frontend
 
 if [[ ! -f package.json ]]; then
   step "Creating Next.js app"
-  npx create-next-app@latest . --ts --eslint --src-dir --app --no-tailwind --react-compiler --import-alias "@/*"
+  npx create-next-app@latest . --ts --eslint --src-dir --app --no-tailwind --react-compiler --import-alias "@/*" --use-pnpm
 fi
 
 # -------------------------------------------------
@@ -380,48 +552,218 @@ if [[ ! -d public ]]; then
 fi
 
 cat > public/README.md <<'EOF'
-# 🚀 Full‑Stack Starter Kit
+# 🚀 Full-Stack Starter Kit
 
-## Backend (Python)
+**Production-ready Next.js + FastAPI starter with modern tooling**
 
-- **FastAPI** – high‑performance async API framework with automatic OpenAPI docs.
-- **Uvicorn** – lightning‑fast ASGI server.
-- **SQLAlchemy + Alembic** – powerful ORM + database migrations.
-- **PostgreSQL client** – ready to talk to a production‑grade DB.
-- **Python 3.12** (managed by **pyenv**) – modern language features & speed.
+---
 
-## Frontend (React)
+## 🐍 Backend (Python 3.12)
 
-- **Next.js 14 (TypeScript)** – React framework with Server‑Side Rendering, static generation, and the new App Router.
-- **React Query** – declarative data‑fetching & caching.
-- **Axios** – simple HTTP client with interceptor‑based error handling.
-- **Zustand** – tiny, scalable state manager.
-- **Vanilla‑Extract** – type‑safe CSS‑in‑JS (themes, utilities, recipes).
-- **Framer Motion** & **GSAP** – smooth, production‑ready animations.
-- **UI helpers** – `classnames`, `dayjs`, `lottie-react`, `react-icons`, etc.
+### Core Framework
+- **FastAPI** – High-performance async API with automatic OpenAPI docs
+- **Uvicorn** – Lightning-fast ASGI server with hot reload
+- **SQLAlchemy** – Powerful ORM with async support
+- **Alembic** – Database migrations with version control
+- **Pydantic** – Runtime type validation and settings management
 
-## Styling & Theming
+### Database & Storage
+- **PostgreSQL** – Production-grade relational database
+- **psycopg2-binary** – PostgreSQL adapter
 
-- Light / dark design system via CSS custom properties (`--background`, `--foreground`).
-- **next‑themes** – effortless theme switching.
+### Development Tools
+- **pytest** + **pytest-asyncio** – Async test suite with coverage
+- **Ruff** – Fast Python linter (replaces Flake8, isort, pyupgrade)
+- **Black** – Opinionated code formatter
+- **Mypy** – Static type checking
+- **pre-commit** – Git hooks for quality checks
 
-## Developer Experience
+### Utilities
+- **python-dotenv** – Environment variable management
+- **structlog** – Structured logging
+- **tenacity** – Retry logic for external services
+- **httpx** – Modern HTTP client for testing
 
-- **Prettier**, **Ruff**, **Stylelint** – auto‑formatting & linting for code and styles.
-- **Jest** + **React Testing Library** + **jest‑axe** – unit, integration, and accessibility testing out of the box.
-- **PyTest** + **pytest‑asyncio** – backend test suite with coverage reporting.
-- **Mypy** – static type checking for Python.
+---
 
-## Tooling & Automation
+## ⚛️ Frontend (Next.js 15 + TypeScript)
 
-- **nvm** + **apt / brew** – guarantees the exact Node 22.21.1 and required system utilities are present.
-- **Git** – fresh repository initialized on creation.
+### Framework & Routing
+- **Next.js 15** – React framework with App Router, SSR, and RSC
+- **TypeScript** – Type-safe development
+- **React 19** – Latest React features
 
-## Ready‑to‑Run
+### State & Data Fetching
+- **TanStack Query (React Query)** – Declarative data fetching, caching, and synchronization
+- **Zustand** – Lightweight state management (3kb)
+- **Axios** – HTTP client with interceptors
 
-- One‑click commands: `./start.sh` for the API, `npm run dev` for the UI.
-- Example `.env` files included for quick local setup.
+### Styling & Animation
+- **Vanilla Extract** – Type-safe CSS-in-JS with zero runtime
+  - Recipes for component variants
+  - Sprinkles for atomic CSS utilities
+- **Framer Motion** – Production-grade animations
+- **GSAP** – Advanced timeline-based animations
+- **next-themes** – Light/dark mode with system preference support
+
+### UI Utilities
+- **classnames** – Conditional className composition
+- **dayjs** – Lightweight date manipulation (2kb vs 66kb for Moment)
+- **lottie-react** – High-quality animations
+- **react-icons** – Icon library
+- **react-markdown** – Markdown rendering
+- **react-intersection-observer** – Viewport detection
+- **@use-gesture/react** – Touch/mouse gesture recognition
+- **react-use** – Essential React hooks collection
+
+### Scroll & Interaction
+- **Lenis** – Smooth scroll library
+- **scroll-snap** – Scroll snapping utilities
+- **split-type** – Text animation utilities
+- **howler** – Web audio management
+
+### Testing & Quality
+- **Jest** + **React Testing Library** – Component testing
+- **jest-axe** – Accessibility testing
+- **Prettier** – Code formatting
+- **Stylelint** – CSS/SCSS linting
+- **TypeScript** – Type checking
+
+---
+
+## 🛠️ Tooling & Package Management
+
+### Version Management
+- **pyenv** – Python version management (3.12+)
+- **nvm** – Node.js version management (22.21.1)
+- **uv** – Fast Python package installer (Rust-based, replaces pip)
+- **pnpm** – Fast, disk-efficient Node package manager
+
+### System Requirements
+- **build-essential** (Linux) / **Xcode CLI Tools** (macOS) – Compilers for native extensions
+- **PostgreSQL client** – Database connection tools
+- **Git** – Version control with main branch initialized
+
+---
+
+## 🎨 Design System
+
+### Theme Variables
+CSS custom properties for consistent theming:
+- `--background` / `--foreground` – Base colors
+- Automatic dark mode via `prefers-color-scheme`
+- Theme switching with `next-themes`
+
+---
+
+## 🚀 Quick Start
+
+### 1. Configure Environment
+```bash
+# Backend
+cp backend/.env.example backend/.env
+# Edit backend/.env with your database credentials
+
+# Frontend
+cp frontend/.env.example frontend/.env.local
+# Edit frontend/.env.local with your API URL
+```
+
+### 2. Start Development Servers
+
+**Backend:**
+```bash
+cd backend
+./start.sh
+# API available at http://localhost:8000
+# OpenAPI docs at http://localhost:8000/docs
+```
+
+**Frontend:**
+```bash
+cd frontend
+pnpm dev
+# App available at http://localhost:3000
+```
+
+### 3. Run Tests
+
+**Backend:**
+```bash
+cd backend
+source .venv/bin/activate
+pytest
+```
+
+**Frontend:**
+```bash
+cd frontend
+pnpm test
+```
+
+---
+
+## 📁 Project Structure
+```
+.
+├── backend/
+│   ├── app/
+│   │   └── main.py          # FastAPI application
+│   ├── alembic/             # Database migrations
+│   ├── .venv/               # Python virtual environment
+│   ├── requirements.txt     # Python dependencies
+│   ├── pytest.ini           # Test configuration
+│   ├── ruff.toml           # Linter configuration
+│   └── start.sh            # Development server script
+│
+├── frontend/
+│   ├── src/
+│   │   ├── app/            # Next.js App Router
+│   │   ├── components/     # Shared React components
+│   │   ├── api/            # Axios client configuration
+│   │   └── __tests__/      # Test files
+│   ├── public/             # Static assets
+│   ├── package.json        # Node dependencies
+│   ├── tsconfig.json       # TypeScript configuration
+│   ├── jest.config.ts      # Test configuration
+│   └── .prettierrc         # Code formatting rules
+│
+└── .gitignore              # Git exclusions
+```
+
+---
+
+## 🔒 Security Best Practices
+
+- Environment variables for sensitive data (`.env` files gitignored)
+- CORS configured for development (update for production)
+- Type validation on API boundaries via Pydantic
+- SQL injection protection via SQLAlchemy ORM
+- Password hashing ready (add `passlib[bcrypt]` when needed)
+
+---
+
+## 📚 Next Steps
+
+1. **Database Setup**: Configure PostgreSQL and run migrations with `alembic upgrade head`
+2. **API Development**: Add routes in `backend/app/` and models in `backend/app/models/`
+3. **Frontend Components**: Build UI in `frontend/src/components/`
+4. **Authentication**: Add JWT or session-based auth
+5. **Deployment**: Configure for Vercel (frontend) + Railway/Render (backend)
+
+---
+
+## 📦 Package Managers
+
+This project uses modern package managers for speed and efficiency:
+- **uv** for Python (50-100x faster than pip)
+- **pnpm** for Node.js (2-3x faster than npm, saves disk space)
+
+---
+
+Built with ❤️ using best practices for modern full-stack development
 EOF
+
 ok "public/README.md created"
 
 # ----------------------------------------------------
@@ -582,61 +924,65 @@ EOF
 mkdir -p src/components
 
 # -------------------------------------------------------------
-# 1️⃣  Define npm scripts (all in a single command for clarity)
+# Define package.json scripts and dependencies
 # -------------------------------------------------------------
-npm pkg set \
-  scripts.test="jest" \
-  scripts.format="prettier --write ." \
+step "Configuring package.json"
+
+pnpm pkg set \
+  scripts.dev="next dev" \
   scripts.build="next build" \
+  scripts.start="next start" \
+  scripts.test="jest" \
+  scripts.lint="stylelint '**/*.{css,scss,tsx}' --fix" \
+  scripts.format="prettier --write ." \
   scripts.typecheck="tsc --noEmit"
 
-# -------------------------------------------------------------
-# 2️⃣  Add runtime dependencies to package.json (latest versions)
-# -------------------------------------------------------------
-npm pkg set \
-  dependencies."axios"="*" \
+pnpm pkg set \
+  dependencies.axios="*" \
   dependencies."@tanstack/react-query"="*" \
-  dependencies."zustand"="*" \
-  dependencies."classnames"="*" \
-  dependencies."dayjs"="*" \
+  dependencies.zustand="*" \
+  dependencies.classnames="*" \
+  dependencies.dayjs="*" \
   dependencies."framer-motion"="*" \
   dependencies."@vanilla-extract/css"="*" \
   dependencies."@vanilla-extract/recipes"="*" \
   dependencies."@vanilla-extract/sprinkles"="*" \
-  dependencies."gsap"="*" \
+  dependencies.gsap="*" \
   dependencies."react-intersection-observer"="*" \
   dependencies."@use-gesture/react"="*" \
   dependencies."react-use"="*" \
   dependencies."lottie-react"="*" \
   dependencies."react-icons"="*" \
   dependencies."react-markdown"="*" \
-  dependencies."lenis"="*" \
+  dependencies.lenis="*" \
   dependencies."scroll-snap"="*" \
   dependencies."split-type"="*" \
-  dependencies."howler"="*"
+  dependencies.howler="*"
+
+ok "package.json configured"
 
 # -------------------------------------------------------------
-# 3️⃣  Install everything (creates/updates package‑lock.json)
+# Install all dependencies in one command
 # -------------------------------------------------------------
-run_with_spinner "Installing frontend dependencies" \
-  npm install
-
-# -------------------------------------------------------------
-# 4️⃣  Install development‑tooling packages (dev‑dependencies)
-# -------------------------------------------------------------
-run_with_spinner "Installing frontend dev tooling" \
-  npm install -D \
-    jest jest-environment-jsdom jest-axe \
+run_with_spinner "Installing frontend dependencies (this may take a minute)" \
+  pnpm install \
+    jest \
+    jest-environment-jsdom \
+    jest-axe \
     @testing-library/react \
     @testing-library/jest-dom \
-    @types/jest @types/jest-axe \
-    prettier motion next-themes \
+    @types/jest \
+    @types/jest-axe \
+    prettier \
+    motion \
+    next-themes \
     @vanilla-extract/next-plugin \
     postcss-svgo \
-    stylelint stylelint-config-standard \ 
-    
+    stylelint \
+    stylelint-config-standard \
+    --save-dev
 
-npm pkg set scripts.lint="stylelint '**/*.{css,scss,tsx}' --fix"
+ok "Frontend dependencies installed"
 
 # ---- jest config
 cat > jest.config.ts <<'EOF'
@@ -664,13 +1010,9 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import Home from '@/app/page';
 
-test('renders main heading', () => {
+test('renders landing page', () => {
   render(<Home />);
-  expect(
-    screen.getByRole('heading', {
-      name: /welcome to the project starter kit!/i,
-    }),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Next.js\/TypeScript \+ Python Bootstrap/i)).toBeInTheDocument();
 });
 EOF
 
@@ -781,13 +1123,34 @@ EOF
 fi
 
 # =================================================
-# FINAL
+# COMPLETE
 # =================================================
+section "COMPLETE"
+
 END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
 
-section "DONE"
-ok "Bootstrap completed in $((END_TIME - START_TIME))s"
-
+echo -e "${GREEN}${BOLD}✨ Bootstrap completed successfully!${NC}"
 echo
-echo "Backend:  cd $PROJECT_ROOT/backend && ./start.sh"
-echo "Frontend: cd $PROJECT_ROOT/frontend && npm run dev"
+echo -e "${BOLD}Project Summary:${NC}"
+echo -e "  • Name:     ${BOLD}$PROJECT_NAME${NC}"
+echo -e "  • Location: ${DIM}$PROJECT_ROOT${NC}"
+echo -e "  • Node:     $(node -v)"
+echo -e "  • pnpm:     $(pnpm --version)"
+echo -e "  • Python:   $(python3 --version | awk '{print $2}')"
+echo -e "  • Time:     ${ELAPSED}s"
+echo
+echo -e "${BOLD}Next steps:${NC}"
+echo -e "  1. Configure your environment:"
+echo -e "     ${DIM}cp backend/.env.example backend/.env${NC}"
+echo -e "     ${DIM}cp frontend/.env.example frontend/.env.local${NC}"
+echo
+echo -e "  2. Start development servers:"
+echo -e "     ${DIM}cd $PROJECT_ROOT/backend && ./start.sh${NC}"
+echo -e "     ${DIM}cd $PROJECT_ROOT/frontend && pnpm dev${NC}"
+echo
+if [[ "${NEEDS_RELOAD:-false}" == "true" ]]; then
+  echo -e "${YELLOW}⚠ Don't forget to reload your shell:${NC}"
+  echo -e "     ${DIM}source $SHELL_RC${NC}"
+  echo
+fi

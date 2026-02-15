@@ -39,5 +39,3 @@
 
 - One‑click commands: `./start.sh` for the API, `npm run dev` for the UI.
 - Example `.env` files included for quick local setup.
-
-_Place this summary on your landing page to give visitors an instant, human‑friendly snapshot of what powers the project._```

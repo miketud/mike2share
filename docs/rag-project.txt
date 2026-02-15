@@ -1,42 +1,40 @@
 # Client-Server Architecture (PC → Workstation)
 
-## Clear Separation
-
 ```
-┌─────────────────────────────────────┐
-│     Your PC (Development)           │
-├─────────────────────────────────────┤
-│  ✅ Frontend (Next.js)     :3000    │
-│  ✅ Backend (FastAPI)      :8000    │
-│  ✅ PostgreSQL             :5432    │
-│  ✅ Code editing                    │
-│  ✅ Git repository                  │
-│  ✅ Development tools               │
-└─────────────────────────────────────┘
+┌──────────────────────────────────┐
+│  The PC (Development)            │
+├──────────────────────────────────┤
+│  Frontend (Next.js)     :3000    │
+│  Backend (FastAPI)      :8000    │
+│  PostgreSQL             :5432    │
+│  Code editing                    │
+│  Git repository                  │
+│  Development tools               │
+└──────────────────────────────────┘
               │
-      Tailscale VPN
-       (API calls)
+      Tailscale VPN or LAN
+          (API calls)
               │
-┌─────────────────────────────────────┐
-│   GPU Workstation (Compute Only)    │
-├─────────────────────────────────────┤
-│  ✅ vLLM              :8001         │
-│  ✅ Qdrant            :6333         │
-│  ✅ Embedding Service :8002         │
-│  ✅ Celery Workers    (background)  │
-│  ✅ Redis             :6379         │
-│                                      │
-│  ❌ No frontend                     │
-│  ❌ No main database                │
-│  ❌ No business logic               │
-└─────────────────────────────────────┘
+┌──────────────────────────────────┐
+│  GPU Workstation (Compute Only)  │
+├──────────────────────────────────┤
+│  vLLM              :8001         │
+│  Qdrant            :6333         │
+│  Embedding Service :8002         │
+│  Celery Workers    (background)  │
+│  Redis             :6379         │
+│                                  │
+│  No frontend                     │
+│  No main database                │
+│  No business logic               │
+└──────────────────────────────────┘
 ```
 
 ---
 
 ## Responsibilities
 
-### **Your PC (Client)**
+### **The PC (Client)**
 **All Development**:
 - Code in VS Code (local files on PC)
 - Git operations
@@ -65,7 +63,7 @@
 
 ## Project Structure
 
-### **On Your PC**
+### **On The PC**
 ```
 ~/Projects/rag-platform/
 ├── frontend/              # Next.js (runs locally :3000)
@@ -571,7 +569,7 @@ GPU_AVAILABLE=false
 
 ## TL;DR
 
-**PC (Your Development Machine)**:
+**PC (The Development Machine)**:
 - All code (edit locally in VS Code)
 - Frontend server (Next.js :3000)
 - Backend server (FastAPI :8000)
@@ -586,6 +584,4 @@ GPU_AVAILABLE=false
 - Redis (task queue)
 - Receives HTTP requests, returns results
 
-**Your PC orchestrates, workstation computes.**
-
-**Ready to set this up or need clarification on any part?**
+**The PC orchestrates, workstation computes.**
