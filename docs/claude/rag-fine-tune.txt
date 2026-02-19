@@ -1,0 +1,375 @@
+# AI System Architecture — Complete Guide
+
+---
+
+## Two Distinct Systems
+
+```
+System 1 — RAG    → gives model knowledge at runtime, weights unchanged
+System 2 — Fine-tune → changes model behavior permanently via training
+```
+
+They are complementary. Most production systems use both.
+
+---
+
+# SYSTEM 1 — RAG
+
+## What It Is
+Retrieval Augmented Generation. Instead of relying solely on what a model was trained on, you retrieve relevant information from your own data at query time and inject it into the prompt. Model reasons over retrieved context.
+
+---
+
+## End-to-End Flow
+
+```
+Raw Data
+    ↓
+Ingestion & Chunking
+    ↓
+Embedding
+    ↓
+Vector DB Storage
+    ↓
+Query comes in
+    ↓
+Query Embedding
+    ↓
+Similarity Search → Retrieved Chunks
+    ↓
+Chunks + Query → LLM (vLLM)
+    ↓
+Response
+```
+
+---
+
+## Stage 1 — Raw Data Ingestion
+
+Take your source material in any format and prepare it for processing.
+
+**Formats handled:**
+- PDF, DOCX, HTML, CSV, JSON, plain text
+- Database exports, API responses, code files
+
+**Tools:**
+| Tool | What It Does |
+|---|---|
+| **Unstructured** | Parses any document format into clean text |
+| **LlamaParse** | High quality PDF/document parsing, handles tables |
+| **Apache Tika** | Document extraction, broad format support |
+| **BeautifulSoup** | HTML scraping and parsing |
+
+---
+
+## Stage 2 — Chunking
+
+Splits documents into smaller pieces that fit within model context windows and carry coherent meaning. How you chunk directly determines retrieval quality.
+
+**Chunking strategies:**
+| Strategy | What It Does | Best For |
+|---|---|---|
+| Fixed size | Split every N characters/tokens | Simple, fast, baseline |
+| Recursive | Split by paragraphs → sentences → words | General text |
+| Semantic | Split at meaning boundaries using embeddings | High quality retrieval |
+| Document structure | Split by headers, sections | Structured docs |
+| Agentic | LLM decides chunk boundaries | Highest quality, slowest |
+
+**Key parameters:**
+- **Chunk size** — how large each piece is (typically 256-1024 tokens)
+- **Overlap** — how much adjacent chunks share (prevents context loss at boundaries)
+
+**Tools:**
+| Tool | What It Does |
+|---|---|
+| **LangChain text splitters** | Multiple chunking strategies, configurable |
+| **LlamaIndex node parsers** | Document-aware chunking |
+| **Chonkie** | Semantic chunking library |
+
+---
+
+## Stage 3 — Embedding
+
+Converts text chunks into vectors — lists of numbers that represent semantic meaning. Similar meaning = similar numbers = close in vector space.
+
+**What an embedding is:**
+Text goes in, a list of ~768-4096 numbers comes out. Those numbers encode meaning. "Metformin" and "biguanide antidiabetic" would produce similar vectors even though the words differ.
+
+**Embedding models:**
+| Model | Notes |
+|---|---|
+| **BGE-M3** | Strong multilingual, open source, self-hostable |
+| **E5-large** | Strong general purpose, open source |
+| **text-embedding-3-small** | OpenAI API, high quality, not local |
+| **nomic-embed-text** | Good local option, runs via Ollama |
+| **MedCPT** | Biomedical domain specific — relevant for clinical data |
+
+**Rule:** Embedding model used at ingestion must be the same model used at query time.
+
+---
+
+## Stage 4 — Vector Database
+
+Stores embeddings alongside original text chunks. Optimized for similarity search — finds the chunks whose vectors are closest to the query vector.
+
+**Similarity metrics:**
+- **Cosine similarity** — angle between vectors, most common
+- **Dot product** — magnitude + angle
+- **Euclidean distance** — raw distance in vector space
+
+**Vector DB options:**
+| Tool | What It Does | Best For |
+|---|---|---|
+| **pgvector** | PostgreSQL extension — vectors in your existing DB | Already using Postgres |
+| **Qdrant** | Purpose-built vector DB, self-hostable, fast | Production RAG |
+| **Weaviate** | Vector DB with built-in hybrid search | Hybrid search priority |
+| **Chroma** | Lightweight, local, good for development | Prototyping |
+| **Milvus** | High scale, distributed | Enterprise scale |
+
+---
+
+## Stage 5 — Retrieval
+
+Query comes in → embed it → search vector DB → return top-K most similar chunks.
+
+**Retrieval strategies:**
+| Strategy | What It Does |
+|---|---|
+| **Dense retrieval** | Pure vector similarity search |
+| **Sparse retrieval (BM25)** | Keyword-based, traditional search |
+| **Hybrid retrieval** | Combines dense + sparse, best of both |
+| **MMR** | Maximal Marginal Relevance — balances relevance and diversity, avoids redundant chunks |
+| **Multi-query** | LLM generates multiple versions of query, retrieves for each, merges results |
+| **HyDE** | Hypothetical Document Embedding — LLM generates a hypothetical answer, embeds that, retrieves similar chunks |
+| **Re-ranking** | Second pass model scores retrieved chunks by relevance, reorders before sending to LLM |
+
+**Re-ranking models:**
+| Tool | What It Does |
+|---|---|
+| **BGE-reranker** | Cross-encoder, scores query-chunk pairs, open source |
+| **Cohere Rerank** | API-based, high quality |
+| **FlashRank** | Lightweight local re-ranker |
+
+**Hybrid retrieval is the current best practice** — keyword search catches exact matches that vector search misses, vector search catches semantic matches keyword search misses.
+
+---
+
+## Stage 6 — Generation
+
+Retrieved chunks + original query assembled into a prompt → sent to LLM → response generated.
+
+**Prompt structure:**
+```
+System: You are a clinical assistant. Answer only from provided context.
+Context: [chunk 1] [chunk 2] [chunk 3]
+User: [original query]
+```
+
+**LLM serving:**
+vLLM serves the model. RAG pipeline sends requests to vLLM API endpoint.
+
+---
+
+## RAG Tooling Summary
+
+| Layer | Tool Options |
+|---|---|
+| Orchestration | LangChain, LlamaIndex |
+| Document parsing | Unstructured, LlamaParse |
+| Chunking | LangChain splitters, LlamaIndex, Chonkie |
+| Embedding | BGE-M3, E5, MedCPT |
+| Vector DB | pgvector, Qdrant, Weaviate |
+| Retrieval | Hybrid (BM25 + dense) + re-ranking |
+| LLM serving | vLLM |
+
+---
+
+---
+
+# SYSTEM 2 — FINE-TUNING
+
+## What It Is
+Modifying model weights on your own curated data so the model permanently behaves differently — better domain reasoning, corrected errors, your quality standards baked in.
+
+---
+
+## End-to-End Flow
+
+```
+Base Model
+    ↓
+Dataset Preparation
+    ↓
+SFT (Supervised Fine-Tuning)
+    ↓
+Preference Data Collection (human layer)
+    ↓
+DPO / RLHF
+    ↓
+Evaluation
+    ↓
+Merge adapter into base model
+    ↓
+Serve via vLLM
+```
+
+---
+
+## Stage 1 — Dataset Preparation
+
+Your training data. Quality over quantity — 500 expert examples outperform 50,000 mediocre ones.
+
+**SFT format** — instruction/response pairs:
+```json
+{
+  "instruction": "Translate this sig: 1 tab po bid pc",
+  "response": "Take 1 tablet by mouth twice daily after meals"
+}
+```
+
+**DPO format** — chosen vs rejected pairs:
+```json
+{
+  "prompt": "Translate this sig: 1 tab po bid pc",
+  "chosen": "Take 1 tablet by mouth twice daily after meals",
+  "rejected": "Take 1 tablet orally two times a day after food"
+}
+```
+
+**Tools:**
+| Tool | What It Does |
+|---|---|
+| **Label Studio** | Self-hosted annotation UI — review, correct, label outputs |
+| **Argilla** | Self-hosted dataset curation, built for LLM feedback |
+| **doccano** | Lightweight annotation tool |
+
+---
+
+## Stage 2 — SFT (Supervised Fine-Tuning)
+
+First training pass. Show model correct examples directly. Teaches domain knowledge and output format before preference alignment.
+
+**What it does:** Increases probability of correct responses on your specific task. Think of it as the foundation layer.
+
+---
+
+## Stage 3 — LoRA (Low-Rank Adaptation)
+
+Not a training method — an efficiency technique applied during SFT and DPO.
+
+Instead of updating all billions of model weights (expensive, slow, requires massive VRAM), LoRA attaches small trainable adapter matrices to specific layers. Only adapters are trained. Base model weights frozen.
+
+```
+Base model weights    → frozen, untouched
+LoRA adapter layers   → small, trainable, ~1-2% of total parameters
+    ↓
+After training: merge adapter into base model
+    ↓
+Single model file, no runtime overhead
+```
+
+**QLoRA** — same as LoRA but base model is quantized (compressed) first. Even less VRAM. Slight quality tradeoff.
+
+---
+
+## Stage 4 — DPO (Direct Preference Optimization)
+
+Second training pass after SFT. Uses chosen/rejected pairs to push model toward your quality standard.
+
+**What it does:** Model sees two responses to same prompt — yours labeled chosen, worse one labeled rejected. Weights shift to increase probability of chosen, decrease probability of rejected.
+
+No reward model required. Direct, stable, practical.
+
+---
+
+## Stage 5 — RLHF (Reinforcement Learning from Human Feedback)
+
+Full preference alignment pipeline. More powerful than DPO, more complex.
+
+**Components:**
+```
+1. SFT model (already trained)
+2. Reward model — trained on your preference rankings
+   learns to score responses as you would
+3. PPO training loop — main model trained to maximize
+   reward model score
+```
+
+**PPO** — Proximal Policy Optimization. The reinforcement learning algorithm that updates the main model based on reward signals. Handled by TRL, you don't implement it directly.
+
+**RLAIF** — Reinforcement Learning from AI Feedback. Same pipeline but an LLM generates preference labels instead of a human. Used to scale data collection. Your human layer produces higher signal — RLAIF supplements when you need volume.
+
+**KTO** — Kahneman-Tversky Optimization. Preference training without needing pairs. Label single responses as good or bad. Easier data collection than DPO, competitive results.
+
+**ORPO** — Odds Ratio Preference Optimization. Combines SFT and DPO into a single training pass. Less data needed, faster. Good alternative if iteration speed matters.
+
+---
+
+## Stage 6 — Evaluation
+
+Measure whether fine-tuning improved things before merging and deploying.
+
+**Approaches:**
+| Method | What It Does |
+|---|---|
+| Held-out test set | Reserve 10-20% of data, never trained on, measure accuracy |
+| LLM-as-judge | Use a stronger model to score outputs |
+| Human eval | You review a sample of outputs directly |
+| Domain benchmarks | Task-specific metrics (BLEU for translation, exact match for codes) |
+
+---
+
+## Fine-Tuning Tooling Summary
+
+| Layer | Tool | What It Does |
+|---|---|---|
+| Speed optimization | **Unsloth** | Faster training, less VRAM, wraps HuggingFace |
+| Training methods | **TRL** | SFT, DPO, PPO, KTO, ORPO trainers |
+| Model loading | **HuggingFace Transformers** | Load base model and tokenizer |
+| Annotation | **Label Studio** | Human review and preference labeling UI |
+| Experiment tracking | **Weights & Biases (W&B)** | Logs training metrics, loss curves, comparisons |
+| Model storage | **HuggingFace Hub** | Store and version your fine-tuned adapters |
+
+---
+
+---
+
+# COMBINED ARCHITECTURE
+
+```
+Raw Data → Ingest → Chunk → Embed → Vector DB
+                                        ↓
+User Query → Embed → Retrieve → Re-rank
+                                        ↓
+                            Context + Query
+                                        ↓
+                               vLLM (Fine-tuned Model)
+                                        ↓
+                                    Response
+                                        ↓
+                            Human Reviews Output
+                                        ↓
+                         Label Studio — curate pairs
+                                        ↓
+                              DPO / RLHF training
+                                        ↓
+                            Improved model deployed
+                                        ↓
+                                    Repeat
+```
+
+---
+
+## The Flywheel
+
+```
+Better retrieval → better context → better responses
+Better responses → less correction needed
+More corrections → better training data
+Better training data → better model
+Better model → better responses
+```
+
+Each cycle compounds. The human layer is the quality signal that generic models lack — it's the differentiator.
+
+---

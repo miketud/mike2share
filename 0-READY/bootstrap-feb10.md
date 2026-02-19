@@ -1,4 +1,4 @@
-# feb10.sh - Full-Stack Bootstrap Script
+# bootstrap-feb10.sh - Full-Stack Bootstrap Script
 
 A Bash script that automates the setup of a production-ready full-stack application using Next.js (frontend) and FastAPI (backend).
 

@@ -1,0 +1,163 @@
+# RAG Project Description and Step-by-Step Installation Guide
+
+## Project Overview
+
+This is a distributed RAG (Retrieval-Augmented Generation) system that separates development work from compute-intensive tasks. The architecture consists of two machines:
+- **PC (Development Machine)**: Handles all code development, frontend, backend, and local database
+- **Workstation (Compute Server)**: Handles all GPU/CPU intensive tasks like LLM inference, embeddings, and vector search
+
+## Complete Installation Walkthrough
+
+### Step 1: PC Development Environment Setup
+
+**Tools and Packages:**
+- Node.js and npm (for Next.js frontend)
+- Python 3.8+ (for FastAPI backend)
+- Docker (for local service orchestration)
+- PostgreSQL 16 (for application data)
+- Git (for version control)
+
+**Roles:**
+- Node.js: Builds and runs the Next.js frontend (port 3000)
+- Python: Runs the FastAPI backend (port 8000)
+- Docker: Orchestrates local services (PostgreSQL, frontend, backend)
+- PostgreSQL: Stores application data and document metadata
+- Git: Manages code repository
+
+### Step 2: PC Project Initialization
+
+**Directory Structure:**
+```
+~/Projects/rag-platform/
+├── frontend/              # Next.js web application
+├── backend/               # FastAPI Python application
+├── docker-compose.yml     # Local service orchestration
+├── .env                   # Environment configuration
+└── README.md
+```
+
+**Roles:**
+- frontend/: Contains React/Next.js user interface
+- backend/: Contains Python FastAPI application logic
+- docker-compose.yml: Starts local PostgreSQL, frontend, and backend services
+- .env: Configuration pointing to workstation services
+
+### Step 3: Workstation Compute Environment Setup
+
+**Tools and Packages:**
+- Docker with NVIDIA Container Toolkit (for GPU access)
+- NVIDIA drivers (for GPU support)
+- CUDA toolkit (for GPU computing)
+- Git (for version control)
+
+**Roles:**
+- Docker with NVIDIA: Runs GPU-accelerated containers
+- NVIDIA drivers: Enable GPU access for containers
+- CUDA: Provides GPU computing framework
+- Git: Manages workstation code repository
+
+### Step 4: Workstation Project Initialization
+
+**Directory Structure:**
+```
+~/gpu-services/
+├── docker-compose.yml     # GPU service orchestration
+├── embedding-service/     # Text embedding service
+├── celery-worker/         # Fine-tuning task worker
+└── .env                   # Workstation configuration
+```
+
+**Roles:**
+- docker-compose.yml: Starts all GPU services (vLLM, Qdrant, Redis, embedding-service, celery-worker)
+- embedding-service/: Handles text embeddings using sentence-transformers
+- celery-worker/: Performs fine-tuning tasks using Celery and Axolotl
+- .env: GPU and model configuration
+
+### Step 5: Core Services and Their Roles
+
+**vLLM Service (Workstation):**
+- Role: LLM inference and text generation
+- GPU Task: Runs large language models for answering queries
+- Port: 8001 (mapped to 8000 in container)
+
+**Qdrant Service (Workstation):**
+- Role: Vector storage and similarity search
+- GPU Task: Stores and searches document embeddings
+- Port: 6333
+
+**Embedding Service (Workstation):**
+- Role: Converts text to vector embeddings
+- GPU Task: Uses sentence-transformers on GPU
+- Port: 8002
+
+**Redis Service (Workstation):**
+- Role: Task queue for Celery workers
+- CPU Task: Manages background fine-tuning jobs
+- Port: 6379
+
+**Celery Worker (Workstation):**
+- Role: Background fine-tuning and training tasks
+- GPU Task: Uses Axolotl framework for model fine-tuning
+- Port: Not exposed externally (uses Redis for communication)
+
+### Step 6: Network Configuration
+
+**Connection Process:**
+1. PC connects to workstation via Tailscale VPN or LAN
+2. PC services make HTTP requests to workstation services
+3. Workstation services return results via HTTP APIs
+4. All communication happens over network, not file sharing
+
+### Step 7: Development Workflow
+
+**Document Upload Process:**
+1. User uploads document via frontend (port 3000)
+2. Backend receives request (port 8000)
+3. Backend parses document locally (CPU task)
+4. Backend sends text to workstation embedding service (port 8002)
+5. Workstation returns embeddings (GPU task)
+6. Backend stores vectors in Qdrant (port 6333)
+7. Backend stores metadata in local PostgreSQL
+8. User gets response through frontend
+
+**Query Process:**
+1. User asks question via frontend (port 3000)
+2. Backend receives request (port 8000)
+3. Backend sends query to workstation embedding service (port 8002)
+4. Workstation returns query embedding (GPU task)
+5. Backend searches vectors in Qdrant (port 6333)
+6. Backend retrieves chunk text from local PostgreSQL
+7. Backend sends prompt to workstation vLLM (port 8001)
+8. Workstation returns generated answer (GPU task)
+9. Backend stores query/answer in local PostgreSQL
+10. Response returned to user via frontend
+
+### Step 8: Fallback Mechanism
+
+**When Workstation is Unavailable:**
+- Set `GPU_AVAILABLE=false` in PC .env
+- Backend automatically uses fallback CPU models
+- Development continues on PC without GPU services
+- Mock responses provided when needed
+
+### Step 9: Container Management
+
+**Docker Commands:**
+- `docker-compose up -d`: Start all local services
+- `docker-compose down`: Stop and remove containers
+- `docker-compose up --build`: Rebuild images with updated code
+- `docker-compose logs`: View service logs
+
+**GPU Container Features:**
+- `runtime: nvidia` in docker-compose enables GPU access
+- `CUDA_VISIBLE_DEVICES` controls which GPUs are used
+- Volume mounts preserve model data between restarts
+- All packages installed in container at build time
+
+## Key Advantages
+
+✅ **PC Independence**: All development happens locally
+✅ **GPU Isolation**: Compute tasks separated from development
+✅ **Network Resilience**: Works with fallbacks when workstation down
+✅ **Cost Effective**: Workstation can be powered off when not needed
+✅ **Clean Separation**: Business logic on PC, compute on workstation

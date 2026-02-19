@@ -1,0 +1,357 @@
+# RAG Project Build Guide
+
+## Architecture Overview
+
+### PC (Development Machine)
+- All code development (VS Code)
+- Frontend (Next.js :3000)
+- Backend (FastAPI :8000)
+- PostgreSQL (application data :5432)
+- Git repository and development tools
+
+### Workstation (Compute Server)
+- GPU/CPU intensive tasks only
+- vLLM (LLM inference)
+- Qdrant (vector search)
+- Embedding service (GPU)
+- Celery workers (fine-tuning)
+- Redis (task queue)
+- No frontend, no main database
+
+## Project Structure
+
+### PC Project (`~/Projects/rag-platform/`)
+
+```
+~/Projects/rag-platform/
+├── frontend/              # Next.js (runs locally :3000)
+├── backend/               # FastAPI (runs locally :8000)
+│   ├── main.py
+│   ├── routes/
+│   ├── models.py         # SQLAlchemy
+│   ├── services/
+│   │   ├── workstation_client.py  # HTTP client for workstation
+│   │   ├── document.py
+│   │   └── query.py
+│   └── config.py
+├── alembic/              # DB migrations
+├── .env                  # Points to workstation Tailscale IPs
+├── docker-compose.yml    # Only: postgres, frontend, backend
+└── README.md
+```
+
+### Workstation Project (`~/gpu-services/`)
+
+```
+~/gpu-services/
+├── docker-compose.yml    # Only GPU services
+├── embedding-service/
+│   ├── Dockerfile
+│   └── main.py          # FastAPI wrapper for sentence-transformers
+├── celery-worker/
+│   ├── Dockerfile
+│   └── tasks.py         # Fine-tuning tasks
+└── .env
+```
+
+## Workstation Implementation Details
+
+### Embedding Service (`~/gpu-services/embedding-service/`)
+
+**main.py**:
+```python
+from fastapi import FastAPI
+from sentence_transformers import SentenceTransformer
+from pydantic import BaseModel
+
+app = FastAPI()
+
+# Load model on GPU at startup
+model = SentenceTransformer('BAAI/bge-large-en-v1.5', device='cuda')
+
+class EmbedRequest(BaseModel):
+    texts: list[str]
+    batch_size: int = 256
+
+@app.post("/encode")
+async def encode(request: EmbedRequest):
+    embeddings = model.encode(
+        request.texts,
+        batch_size=request.batch_size,
+        show_progress_bar=False,
+        convert_to_tensor=True
+    )
+    return {
+        "embeddings": embeddings.cpu().tolist(),
+        "model": "bge-large-en-v1.5",
+        "dimension": len(embeddings[0])
+    }
+
+@app.get("/health")
+async def health():
+    return {"status": "ready", "gpu": "cuda", "model_loaded": True}
+```
+
+**Dockerfile**:
+```
+FROM nvidia/cuda:11.8.0-runtime-ubuntu20.04
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**requirements.txt**:
+```
+fastapi
+sentence-transformers
+pydantic
+uvicorn
+```
+
+### Celery Worker (`~/gpu-services/celery-worker/`)
+
+**tasks.py**:
+```python
+# Celery task definitions for fine-tuning
+# Implementation would use Axolotl framework for training
+```
+
+**Dockerfile**:
+```
+FROM nvidia/cuda:11.8.0-runtime-ubuntu20.04
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+
+CMD ["celery", "-A", "tasks", "worker", "--loglevel=info"]
+```
+
+**requirements.txt**:
+```
+celery
+redis
+torch
+transformers
+axolotl
+```
+
+## Package Management
+
+### Workstation Packages
+- **All packages are managed within Docker containers**
+- **No local venvs needed** on the workstation
+- **Packages installed at container build time**
+- **Dockerfiles define exact dependencies for each service**
+
+### PC Development Packages
+- Next.js frontend dependencies
+- FastAPI backend dependencies
+- PostgreSQL client libraries
+- Development tools and testing libraries
+
+## Environment Configuration
+
+### PC `.env` file:
+```bash
+# Local services
+DATABASE_URL=postgresql://user:pass@localhost:5432/ragdb
+FRONTEND_URL=http://localhost:3000
+
+# Workstation services (Tailscale IPs)
+WORKSTATION_VLLM=http://100.x.x.x:8001/v1
+WORKSTATION_QDRANT_HOST=100.x.x.x
+WORKSTATION_QDRANT_PORT=6333
+WORKSTATION_EMBEDDING=http://100.x.x.x:8002
+WORKSTATION_CELERY_BROKER=redis://100.x.x.x:6379/0
+
+# Feature flags
+GPU_AVAILABLE=true  # Set to false when workstation down
+```
+
+### Workstation `.env` file:
+```bash
+# Only need service configs
+CUDA_VISIBLE_DEVICES=0,1,2
+MODEL_PATH=/models
+```
+
+## Docker Compose Setup
+
+### PC `docker-compose.yml`:
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: ragdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    env_file: .env
+    depends_on:
+      - postgres
+    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    command: npm run dev
+```
+
+### Workstation `docker-compose.yml`:
+```yaml
+version: '3.8'
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=1,2
+    command: >
+      --model /models/gpt-oss-120b
+      --tensor-parallel-size 2
+      --host 0.0.0.0
+      --port 8000
+    ports:
+      - "8001:8000"
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+
+  embedding-service:
+    build: ./embedding-service
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+    ports:
+      - "8002:8000"
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  celery-worker:
+    build: ./celery-worker
+    runtime: nvidia
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - /home/you/models:/models
+    restart: unless-stopped
+```
+
+## Development Workflow
+
+### Day-to-Day Development
+```bash
+# On PC
+cd ~/Projects/rag-platform
+
+# Start local services
+docker-compose up -d
+
+# Or run natively
+# Terminal 1: Backend
+cd backend
+uvicorn main:app --reload
+
+# Terminal 2: Frontend
+cd frontend
+npm run dev
+
+# Browser: http://localhost:3000
+# FastAPI docs: http://localhost:8000/docs
+```
+
+### API Call Flow
+1. User uploads document in browser → Frontend sends to localhost:8000/documents/upload
+2. Backend parses locally → Sends embeddings request to workstation:8002
+3. Backend stores vectors in workstation Qdrant → Stores metadata in local PostgreSQL
+4. Returns success to frontend
+
+## Fallback Mechanism
+
+### Mock Mode When Workstation Down
+```python
+# backend/services/workstation_client.py
+class WorkstationClient:
+    async def embed_texts(self, texts: list[str]):
+        if not self.available:
+            # Fallback to small CPU model on PC
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer('all-MiniLM-L6-v2')  # 80MB, CPU
+            return model.encode(texts).tolist()
+        
+        # Normal workstation call
+        ...
+    
+    async def generate_text(self, prompt: str, max_tokens: int = 512):
+        if not self.available:
+            # Return mock response
+            return f"[MOCK - Workstation unavailable] Response would be generated for: {prompt[:50]}..."
+        
+        # Normal workstation call
+        ...
+```
+
+## Advantages
+
+✅ **PC independence**: Code, develop, debug locally  
+✅ **Workstation = utility**: Only for compute-heavy tasks  
+✅ **Network resilience**: Works with mocks if workstation down  
+✅ **Simple deployment**: PC services always local, workstation services always remote  
+✅ **Cost effective**: Workstation can be powered down when not needed  
+✅ **Clean separation**: Business logic on PC, compute on workstation  
+
+## Key Implementation Notes
+
+1. **Containerization**: All workstation services are containerized with GPU support
+2. **No local venvs**: Packages managed by Docker, not manual Python environments
+3. **GPU access**: Uses `runtime: nvidia` in docker-compose for GPU access
+4. **Volume mounting**: Models mounted from host via volumes for persistence
+5. **Network isolation**: PC handles coordination, workstation handles compute
