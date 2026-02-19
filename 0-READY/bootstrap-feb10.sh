@@ -865,15 +865,15 @@ export default function LandingPage() {
       <header
         style={{
           width: '100%',
-          background: '#91cdc4',
+          background: '#def',
           color: '#000000',
           padding: '1rem 2rem',
           borderBottom: '4px solid #000000',
           display: 'flex',
-          justifyContent: 'space-between',
           alignItems: 'center',
           fontSize: '1.5rem',
           fontWeight: 600,
+          marginLeft: '1rem',
         }}
       >
         <div>Next.js/TypeScript + Python Bootstrap</div>

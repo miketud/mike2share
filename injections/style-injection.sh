@@ -6,81 +6,71 @@
 #   • Rewrites layout.tsx to wrap the app in ThemeProvider
 #   • Adds ThemeProvider.tsx and ThemeToggleButton.tsx
 # --------------------------------------------------------
-set -euo pipefail
+set -eu
+
+# =================================================
+# UX / logging helpers
+# =================================================
+trap 'echo -e "\n\033[0;31m✖ Failed at line $LINENO\033[0m"; exit 1' ERR
+
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[0;33m'
+  BLUE='\033[0;34m'
+  BOLD='\033[1m'
+  DIM='\033[2m'
+  NC='\033[0m'
+else
+  RED='' GREEN='' YELLOW='' BLUE='' BOLD='' DIM='' NC=''
+fi
+
+section() { echo; echo -e "${BOLD}${BLUE}════════ $1 ════════${NC}"; }
+step()    { echo -e "${BLUE}▶${NC} $1"; }
+ok()      { echo -e "${GREEN}✔${NC} $1"; }
+warn()    { echo -e "${YELLOW}⚠${NC} $1"; }
+
+START_TIME=$(date +%s)
+
+# =================================================
+# PROJECT SETUP
+# =================================================
+section "PROJECT SETUP"
 
 # --------------------------------------------------------
-# Helper – pretty output (re‑uses the colour functions from boot‑10.sh)
+# 1️⃣  Get project path from user
 # --------------------------------------------------------
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-step() { printf "${BLUE}▶${NC} %s\n" "$1"; }
-ok()   { printf "${GREEN}✔${NC} %s\n" "$1"; }
-warn() { printf "${YELLOW}⚠${NC} %s\n" "$1"; }
+echo "Please enter the path to your Next.js project:"
+read -r PROJECT_PATH
 
-# --------------------------------------------------------
-# 1️⃣  Determine script location (the “main” folder)
-# --------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# --------------------------------------------------------
-# 2️⃣  Find sibling project directories (must contain a frontend/ folder)
-# --------------------------------------------------------
-candidates=()
-for d in "$SCRIPT_DIR"/*/; do
-  [[ "$d" =~ /\./ ]] && continue                # skip hidden dirs
-  [[ -d "$d/frontend" ]] && candidates+=( "$(basename "$d")" )
-done
-
-# --------------------------------------------------------
-# 3️⃣  Abort if no projects found
-# --------------------------------------------------------
-if (( ${#candidates[@]} == 0 )); then
-  printf "${RED}✖ No project directories with a frontend/ found next to %s${NC}\n" "$(basename "$0")"
+# Validate project path
+if [[ ! -d "$PROJECT_PATH" ]]; then
+  printf "${RED}✖ Project path does not exist: %s${NC}\n" "$PROJECT_PATH"
+  exit 1
+fi
+if [[ ! -d "$PROJECT_PATH/frontend" ]]; then
+  printf "${RED}✖ Project path does not contain a frontend/ directory: %s${NC}\n" "$PROJECT_PATH"
   exit 1
 fi
 
 # --------------------------------------------------------
-# 4️⃣  Prompt user to select a project (number or name)
+# 2️⃣  Set project variables
 # --------------------------------------------------------
-echo "Available projects:"
-for i in "${!candidates[@]}"; do
-  printf "  %2d) %s\n" $((i+1)) "${candidates[i]}"
-done
-
-while true; do
-  read -rp "Select a project by number or type its name: " choice
-
-  # Numeric selection?
-  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice > 0 && choice <= ${#candidates[@]} )); then
-    PROJECT_NAME="${candidates[choice-1]}"
-    break
-  fi
-
-  # Typed name – verify it exists and looks like a project
-  if [[ -d "$SCRIPT_DIR/$choice/frontend" ]]; then
-    PROJECT_NAME="$choice"
-    break
-  fi
-
-  echo -e "${YELLOW}⚠ Invalid choice – try again${NC}"
-done
-
-# --------------------------------------------------------
-# 5️⃣  Resolve the project root and export variables expected by the original script
-# --------------------------------------------------------
-PROJECT_ROOT="${SCRIPT_DIR}/${PROJECT_NAME}"
+PROJECT_NAME="$(basename "$PROJECT_PATH")"
+PROJECT_ROOT="$PROJECT_PATH"
 export PROJECT_ROOT PROJECT_NAME
 
-echo -e "${BLUE}▶${NC} Selected project: $PROJECT_NAME"
-echo -e "${BLUE}▶${NC} Project root:   $PROJECT_ROOT"
+ok "Project root: $PROJECT_ROOT"
 
 # --------------------------------------------------------
-# 6️⃣  Move into the project's frontend folder (as the original script did)
+# 3️⃣  Move into the project's frontend folder
 # --------------------------------------------------------
 cd "$PROJECT_ROOT/frontend"
 
-# ----------------------------------------------------------------
-# The rest of the script is the original *apply-theme.sh* logic.
-# ----------------------------------------------------------------
+# =================================================
+# THEME INJECTION
+# =================================================
+section "THEME INJECTION"
 
 # --------------------------------------------------------
 # 2️⃣  Overwrite globals.css (creates .bak first)
@@ -174,7 +164,6 @@ fi
 
 cat > "$LAYOUT_PATH" <<'EOF'
 import '@/app/globals.css'
-import { GeistSans } from 'geist/font/sans'
 import { ThemeProvider } from '@/app/ThemeProvider'
 
 export const metadata = {
@@ -205,7 +194,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head />
-      <body className={GeistSans.className}>
+      <body>
         <ThemeProvider>
           {/* Global container – centred, responsive width */}
           <div className="container">
@@ -306,12 +295,14 @@ export function ThemeToggleButton() {
     <button
       onClick={toggleTheme}
       className={clsx(
-        'p-2 rounded',
-        theme === 'dark' ? 'bg-gray-800 text-white' : 'bg-gray-200 text-black',
+        'px-4 py-2 rounded-lg font-medium transition-colors duration-200 border',
+        theme === 'light' 
+          ? 'bg-gradient-to-r from-amber-200 to-orange-200 text-sky-600 border-gray-300' 
+          : 'bg-gradient-to-r from-blue-900 to-gray-800 text-gray-300 border-gray-600',
       )}
       aria-label="Toggle colour scheme"
     >
-      {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+      {theme === 'light' ? 'DARK' : 'LIGHT'}
     </button>
   )
 }
@@ -327,10 +318,11 @@ if grep -q 'ThemeToggleButton' "$STEP_PAGE"; then
 else
   step "Injecting ThemeToggleButton into the demo page"
   # Insert the import right after the existing imports
-  sed -i.bak '1i import { ThemeToggleButton } from "@/components/ThemeToggleButton";' "$STEP_PAGE"
-  # Append the component just before the closing </main>
+  # Insert after line 2 (after 'use client' and before the first import)
+  sed -i.bak "3i import { ThemeToggleButton } from '@/components/ThemeToggleButton';" "$STEP_PAGE"
+  # Append the component just before the closing </div> (root element)
   awk '
-    /<\/main>/ && !found {
+    /<\/div>/ && !found && /style=/ {
       print "        <ThemeToggleButton />"
       found=1
     }
