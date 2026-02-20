@@ -13,4 +13,7 @@
 
 # NUTRITION | 2/19/26
 
+# HELP-NEARBY | 2/19/26
+- non-profit = non-people
+- 
 

@@ -853,64 +853,24 @@ export default function LandingPage() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#ffffff',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
+    <div className="main-container">
       {/* Header */}
-      <header
-        style={{
-          width: '100%',
-          background: '#def',
-          color: '#000000',
-          padding: '1rem 2rem',
-          borderBottom: '4px solid #000000',
-          display: 'flex',
-          alignItems: 'center',
-          fontSize: '1.5rem',
-          fontWeight: 600,
-          marginLeft: '1rem',
-        }}
-      >
-        <div>Next.js/TypeScript + Python Bootstrap</div>
-        <button
-          onClick={toggleInfo}
-          style={{
-            background: '#ffffff',
-            color: '#000000',
-            border: '2px solid #000000',
-            padding: '0.5rem 1rem',
-            borderRadius: '4px',
-            fontSize: '1rem',
-            cursor: 'pointer',
-          }}
-        >
-          {loading ? 'Loading...' : showInfo ? 'Hide README' : 'README'}
-        </button>
+      <header className="header">
+        <div className="header-title">
+          Next.js/TypeScript + Python Bootstrap
+        </div>
+        <div className="header-controls">
+          <button onClick={toggleInfo} className="readme-button">
+            {loading ? 'Loading...' : showInfo ? 'Hide README' : 'README'}
+          </button>
+          <ThemeToggleButton />
+        </div>
       </header>
 
       {/* README Section */}
       {showInfo && (
-        <section
-          style={{
-            maxWidth: '80%',
-            width: '100%',
-            padding: '2rem',
-            background: '#ffffff',
-          }}
-        >
-          <div
-            style={{
-              color: '#334155',
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'monospace',
-              lineHeight: '1.6',
-            }}
-          >
+        <section className="readme-section">
+          <div className="readme-content">
             {readmeContent || 'No content available'}
           </div>
         </section>
