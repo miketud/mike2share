@@ -17,3 +17,6 @@
 - non-profit = non-people
 - 
 
+## FUTURE
+- dating app connecting people
+- animal shelter connection

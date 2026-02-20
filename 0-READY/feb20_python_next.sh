@@ -509,18 +509,6 @@ DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 FASTAPI_ENV=development
 EOF
 
-# ---- backend start script
-cat > start.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-source .venv/bin/activate
-APP_MODULE="app.main:app"
-HOST="0.0.0.0"
-PORT="8000"
-exec uvicorn $APP_MODULE --reload --host $HOST --port $PORT
-EOF
-
-chmod 750 start.sh
 ok "Backend ready"
 
 # =================================================
@@ -674,7 +662,13 @@ cp frontend/.env.example frontend/.env.local
 **Backend:**
 ```bash
 cd backend
-./start.sh
+source .venv/bin/activate
+nohup uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+# nohup --> runs command immune to disconnection from terminal (if terminal closes, nohup ensures process keeps running)
+# uvicorn app.main:app --> starts Uvicorn ASGI server, app.main = points to Python module path at main.py in app directory, app = the FastAPI application instance variable name
+# reload --> enables auto-reload when code changes
+# host 0.0.0.0 --8000 --> makes server accessible from any IP address using port 8000 (allows external connections like the frontend running on localhost:3000)
+# > backend.log 2>&1 & --> redirects standard output to a file called backend.log, 2>&1 = redirects standard error to same location as standard output (both go to log file), & = runs entire command in background as a daemon
 # API available at http://localhost:8000
 # OpenAPI docs at http://localhost:8000/docs
 ```
@@ -713,8 +707,7 @@ pnpm test
 │   ├── .venv/               # Python virtual environment
 │   ├── requirements.txt     # Python dependencies
 │   ├── pytest.ini           # Test configuration
-│   ├── ruff.toml           # Linter configuration
-│   └── start.sh            # Development server script
+|   └── ruff.toml            # Linter configuration 
 │
 ├── frontend/
 │   ├── src/
@@ -766,64 +759,6 @@ EOF
 
 ok "public/README.md created"
 
-# ----------------------------------------------------
-# 2️⃣ Write a theme‑aware globals.css (light + dark)
-# ----------------------------------------------------
-step "Writing theme‑aware globals.css"
-
-cat > src/app/globals.css <<'EOF'
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-/* Dark mode overrides – automatically applied when the OS prefers dark */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-/* Global resets & base styles */
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: inherit;
-  margin: 0;
-  padding: 0;
-}
-
-/* Links inherit color */
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-/* Ensure browsers know we support dark mode (helps UI widgets) */
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-}
-EOF
-
-ok "globals.css with light & dark theme variables written"
-
 # ---- custom landing page (overwrite the default page.tsx)
 cat > src/app/page.tsx <<'EOF'
 'use client';
@@ -853,24 +788,45 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="main-container">
+    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
       {/* Header */}
-      <header className="header">
-        <div className="header-title">
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingBottom: '10px',
+          borderBottom: '10px solid #546',
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: '1.5rem' }}>
           Next.js/TypeScript + Python Bootstrap
-        </div>
-        <div className="header-controls">
-          <button onClick={toggleInfo} className="readme-button">
+        </h1>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            onClick={toggleInfo}
+            style={{
+              padding: '8px 16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
             {loading ? 'Loading...' : showInfo ? 'Hide README' : 'README'}
           </button>
-          <ThemeToggleButton />
         </div>
       </header>
 
       {/* README Section */}
       {showInfo && (
-        <section className="readme-section">
-          <div className="readme-content">
+        <section style={{ marginTop: 0 }}>
+          <div
+            style={{
+              padding: '15px',
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              lineHeight: '1.6',
+            }}
+          >
             {readmeContent || 'No content available'}
           </div>
         </section>
@@ -882,6 +838,9 @@ EOF
 
 # ---- create an empty folder for shared UI components
 mkdir -p src/components
+
+# ---- create a folder for shared styles
+mkdir -p src/styles
 
 # -------------------------------------------------------------
 # Define package.json scripts and dependencies
@@ -1106,7 +1065,7 @@ echo -e "     ${DIM}cp backend/.env.example backend/.env${NC}"
 echo -e "     ${DIM}cp frontend/.env.example frontend/.env.local${NC}"
 echo
 echo -e "  2. Start development servers:"
-echo -e "     ${DIM}cd $PROJECT_ROOT/backend && ./start.sh${NC}"
+echo -e "     ${DIM}cd $PROJECT_ROOT/backend && source .venv/bin/activate && nohup uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > backend.log 2>&1 &{NC}"
 echo -e "     ${DIM}cd $PROJECT_ROOT/frontend && pnpm dev${NC}"
 echo
 if [[ "${NEEDS_RELOAD:-false}" == "true" ]]; then
