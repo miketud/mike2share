@@ -89,8 +89,7 @@ export NEEDS_RELOAD=false
 
 # Check if paths are in shell config
 if ! grep -q 'NVM_DIR' "$SHELL_RC" 2>/dev/null || \
-   ! grep -q 'PNPM_HOME' "$SHELL_RC" 2>/dev/null || \
-   ! grep -q 'PYENV_ROOT' "$SHELL_RC" 2>/dev/null; then
+   ! grep -q 'PNPM_HOME' "$SHELL_RC" 2>/dev/null; then
   NEEDS_RELOAD=true
 fi
 
@@ -111,6 +110,14 @@ for cmd in git curl wget tar gzip make gcc pkg-config; do
 done
 
 if (( ${#MISSING[@]} )); then
+  echo -e "${YELLOW}The following system tools will be installed:${NC}"
+  printf "  %s\n" "${MISSING[@]}"
+  read -rp "Do you want to continue? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "\n${RED}Installation cancelled by user${NC}"
+    exit 1
+  fi
+  
   case "$PKG" in
     apt)
       run_with_spinner "Updating apt package index" \
@@ -139,6 +146,12 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
 if ! command -v nvm &>/dev/null; then
+  echo -e "${YELLOW}NVM (Node Version Manager) will be installed.${NC}"
+  read -rp "Do you want to continue? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "\n${RED}Installation cancelled by user${NC}"
+    exit 1
+  fi
   step "Installing NVM"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
   # Re-source after fresh install
@@ -148,6 +161,12 @@ fi
 
 NODE_VER="22.21.1"
 if ! command -v node &>/dev/null || [[ "$(node -v)" != "v$NODE_VER" ]]; then
+  echo -e "${YELLOW}Node.js $NODE_VER will be installed.${NC}"
+  read -rp "Do you want to continue? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "\n${RED}Installation cancelled by user${NC}"
+    exit 1
+  fi
   step "Installing Node $NODE_VER"
   nvm install "$NODE_VER"
   nvm alias default "$NODE_VER"
@@ -166,6 +185,12 @@ export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
 
 if ! command -v pnpm &> /dev/null; then
+  echo -e "${YELLOW}pnpm (Node package manager) will be installed.${NC}"
+  read -rp "Do you want to continue? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "\n${RED}Installation cancelled by user${NC}"
+    exit 1
+  fi
   step "Installing pnpm (Node package manager)"
   curl -fsSL https://get.pnpm.io/install.sh | sh -
   ok "pnpm installed"
@@ -197,6 +222,12 @@ section "POSTGRESQL CLIENT"
 if command -v psql >/dev/null 2>&1; then
   ok "PostgreSQL client already installed ($(psql --version))"
 else
+  echo -e "${YELLOW}PostgreSQL client will be installed.${NC}"
+  read -rp "Do you want to continue? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo -e "\n${RED}Installation cancelled by user${NC}"
+    exit 1
+  fi
   case "$PKG" in
     apt)
       run_with_spinner "Installing PostgreSQL client" \
@@ -215,81 +246,6 @@ else
   fi
 
   ok "PostgreSQL client installed ($(psql --version))"
-fi
-
-# =================================================
-# Ensure Python ≥3.12 via pyenv
-# =================================================
-section "PYTHON SETUP"
-
-# Source pyenv if it exists
-export PYENV_ROOT="$HOME/.pyenv"
-if [ -d "$PYENV_ROOT" ]; then
-  export PATH="$PYENV_ROOT/bin:$PATH"
-  eval "$(pyenv init --path 2>/dev/null)"
-  eval "$(pyenv init - 2>/dev/null)"
-fi
-
-MIN_PY="3.12"
-PYVER=$(
-  python3 - <<'EOF' 2>/dev/null || echo "0.0"
-import sys
-print(f"{sys.version_info.major}.{sys.version_info.minor}")
-EOF
-)
-
-if [[ "$(printf '%s\n' "$MIN_PY" "$PYVER" | sort -V | head -n1)" != "$MIN_PY" ]]; then
-  if ! command -v pyenv &>/dev/null; then
-    step "Installing pyenv"
-    
-    # Install build dependencies
-    case "$PKG" in
-      apt)
-        run_with_spinner "Installing Python build dependencies" \
-          sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
-          libbz2-dev libreadline-dev libsqlite3-dev curl \
-          libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
-        ;;
-      brew)
-        run_with_spinner "Installing Python build dependencies" \
-          brew install openssl readline sqlite3 xz zlib tcl-tk
-        ;;
-    esac
-    
-    curl -fsSL https://pyenv.run | bash
-    export PYENV_ROOT="$HOME/.pyenv"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init --path)"
-    eval "$(pyenv init -)"
-    ok "pyenv installed"
-  fi
-
-  step "Installing Python $MIN_PY"
-  pyenv install -s "$MIN_PY"
-  pyenv global "$MIN_PY"
-  pyenv rehash
-  ok "Python $MIN_PY installed"
-fi
-
-ok "Python $(python3 --version) ready"
-
-# =================================================
-# Ensure uv is installed globally
-# =================================================
-section "UV SETUP"
-
-# Add ~/.local/bin to PATH for uv detection (persists for this script run)
-export PATH="$HOME/.local/bin:$PATH"
-
-if ! command -v uv &> /dev/null; then
-  step "Installing uv (Python package installer)"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  # Source the env file to ensure uv is available immediately
-  [ -f "$HOME/.local/bin/env" ] && source "$HOME/.local/bin/env"
-  ok "uv installed"
-else
-  UV_VERSION=$(uv --version)
-  ok "uv already installed ($UV_VERSION)"
 fi
 
 # =================================================
@@ -362,24 +318,9 @@ Thumbs.db
 .env.*
 !.env.example
 
-# Backend‑specific Python virtual‑env
-.venv/
-venv/
-env/
-
 # Log files
 *.log
 logs/
-
-# Python artefacts
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.egg-info/
-.ruff_cache/
-.mypy_cache/
-.pytest_cache/
 
 # Node / Next.js artefacts
 node_modules/
@@ -407,120 +348,173 @@ section "BACKEND SETUP"
 mkdir -p backend
 cd backend
 
-if [[ ! -d ".venv" ]]; then
-  step "Creating virtualenv"
-  python3 -m venv .venv
-fi
+# ---- Install Fastify backend dependencies
+step "Installing Fastify backend dependencies"
+pnpm add fastify dotenv @types/node
 
-source .venv/bin/activate
+# ---- Install development dependencies
+pnpm add -D typescript @types/jest jest ts-jest @types/node @typescript-eslint/eslint-plugin @typescript-eslint/parser eslint prettier
 
-step "Upgrading pip"
-pip install --upgrade pip
+# ---- Install database dependencies
+pnpm add pg @prisma/client
+pnpm add -D prisma
 
-pip install fastapi 'uvicorn[standard]' sqlalchemy psycopg2-binary alembic \
-    python-dotenv pydantic-settings \
-    pytest pytest-asyncio pytest-cov httpx tenacity \
-    ruff mypy black pre-commit \
-    tiktoken structlog tqdm \
-    unstructured python-docx pdfminer.six \
-    orjson
+# ---- Create basic project structure
+mkdir -p src src/routes src/controllers src/models src/middleware src/utils
 
-pip freeze > requirements.txt
-ok "Backend dependencies installed"
-
-# ---- VSCode settings for Python
-step "Configuring VSCode Python settings"
-mkdir -p .vscode
-cat > .vscode/settings.json <<'EOF'
+# ---- Create tsconfig.json
+cat > tsconfig.json <<'EOF'
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
-  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
-  "python.terminal.activateEnvironment": true
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "types": ["node"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
 EOF
-ok "VSCode settings created"
 
-# ---- ruff config
-cat > ruff.toml <<'EOF'
-[lint]
-select = ["E", "F", "W", "C90"]
-ignore = []
-line-length = 88
-
-[format]
-quote-style = "single"
+# ---- Create .eslintrc.js
+cat > .eslintrc.js <<'EOF'
+module.exports = {
+  parser: '@typescript-eslint/parser',
+  plugins: ['@typescript-eslint'],
+  extends: [
+    'eslint:recommended',
+    '@typescript-eslint/recommended',
+  ],
+  rules: {
+    '@typescript-eslint/no-explicit-any': 'warn',
+    '@typescript-eslint/explicit-function-return-type': 'off',
+    '@typescript-eslint/explicit-module-boundary-types': 'off',
+  },
+  env: {
+    node: true,
+    jest: true,
+  },
+};
 EOF
 
-# ---- Prettier (backend)
+# ---- Create .prettierrc
 cat > .prettierrc <<'EOF'
 {
+  "semi": true,
   "singleQuote": true,
   "trailingComma": "all",
-  "printWidth": 80
+  "printWidth": 80,
+  "tabWidth": 2,
+  "arrowParens": "always"
 }
 EOF
 
+# ---- Create .prettierignore
 cat > .prettierignore <<'EOF'
-__pycache__/
-*.pyc
-*.egg-info/
+node_modules/
+dist/
+*.d.ts
 EOF
 
-# ---- pytest config
-cat > pytest.ini <<'EOF'
-[pytest]
-asyncio_mode = auto
-addopts = --cov=app --cov-report=term-missing
+# ---- Create jest.config.ts
+cat > jest.config.ts <<'EOF'
+import type { Config } from 'jest';
+
+const config: Config = {
+  testEnvironment: 'node',
+  transform: {
+    '^.+\\.ts$': 'ts-jest',
+  },
+  testRegex: '(/__tests__/.*|(\\.|/)(test|spec))\\.ts$',
+  moduleFileExtensions: ['ts', 'js', 'json', 'node'],
+  collectCoverageFrom: [
+    'src/**/*.{js,ts}',
+    '!src/**/*.d.ts',
+  ],
+  coverageDirectory: 'coverage',
+};
+
+export default config;
 EOF
 
-# ---- Alembic
-if [[ ! -d "alembic" ]]; then
-  alembic init alembic
-  sed -i.bak 's|sqlalchemy.url = .*|sqlalchemy.url = env:DATABASE_URL|' alembic.ini || true
-fi
+# ---- Create Prisma directory and schema
+mkdir -p prisma
+cat > prisma/schema.prisma <<'EOF'
+generator client {
+  provider = "prisma-client-js"
+}
 
-# ---- FastAPI app
-mkdir -p app
-cat > app/main.py <<'EOF'
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-
-load_dotenv()
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
 EOF
+
+# ---- Create basic Fastify app
+cat > src/app.ts <<'EOF'
+import fastify from 'fastify'
+import { env } from 'process'
+
+const app = fastify({
+  logger: true
+})
+
+// Health check endpoint
+app.get('/health', async () => {
+  return { status: 'ok' }
+})
+
+export default app
+EOF
+
+# ---- Create main server file
+cat > src/server.ts <<'EOF'
+import app from './app'
+
+const start = async () => {
+  try {
+    const port = parseInt(process.env.PORT || '3000', 10)
+    await app.listen({ port, host: '0.0.0.0' })
+    console.log(`Server listening at http://localhost:${port}`)
+  } catch (err) {
+    console.error(err)
+    process.exit(1)
+  }
+}
+
+start()
+EOF
+
+# ---- Create package.json scripts
+pnpm pkg set \
+  scripts.dev="ts-node src/server.ts" \
+  scripts.build="tsc" \
+  scripts.start="node dist/server.js" \
+  scripts.test="jest" \
+  scripts.lint="eslint src/**/*.ts" \
+  scripts.format="prettier --write ."
 
 # ---- backend .env.example
 cat > .env.example <<'EOF'
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-FASTAPI_ENV=development
+PORT=3000
+NODE_ENV=development
 EOF
 
-# ---- backend start script
-cat > start.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-source .venv/bin/activate
-APP_MODULE="app.main:app"
-HOST="0.0.0.0"
-PORT="8000"
-exec uvicorn $APP_MODULE --reload --host $HOST --port $PORT
-EOF
-
-chmod 750 start.sh
 ok "Backend ready"
 
 # =================================================
@@ -528,10 +522,7 @@ ok "Backend ready"
 # =================================================
 section "FRONTEND SETUP"
 
-# Deactivate Python venv before working with Node
-deactivate 2>/dev/null || true
-
-# Ensure we are back at the project root (may still be inside backend)
+# Ensure we are back at the project root
 cd "$PROJECT_ROOT"
 
 mkdir -p frontend
@@ -554,35 +545,30 @@ fi
 cat > public/README.md <<'EOF'
 # 🚀 Full-Stack Starter Kit
 
-**Production-ready Next.js + FastAPI starter with modern tooling**
+**Production-ready Next.js + Fastify starter with modern tooling**
 
 ---
 
-## 🐍 Backend (Python 3.12)
+## ⚡ Backend (Node.js + Fastify 4)
 
 ### Core Framework
-- **FastAPI** – High-performance async API with automatic OpenAPI docs
-- **Uvicorn** – Lightning-fast ASGI server with hot reload
-- **SQLAlchemy** – Powerful ORM with async support
-- **Alembic** – Database migrations with version control
-- **Pydantic** – Runtime type validation and settings management
+- **Fastify** – High-performance Node.js web framework with excellent TypeScript support
+- **TypeScript** – Type-safe development
+- **Prisma** – Modern database toolkit with ORM and migrations
+- **Jest** – Testing framework with TypeScript support
 
 ### Database & Storage
 - **PostgreSQL** – Production-grade relational database
-- **psycopg2-binary** – PostgreSQL adapter
+- **Prisma Client** – Type-safe database access
 
 ### Development Tools
-- **pytest** + **pytest-asyncio** – Async test suite with coverage
-- **Ruff** – Fast Python linter (replaces Flake8, isort, pyupgrade)
-- **Black** – Opinionated code formatter
-- **Mypy** – Static type checking
-- **pre-commit** – Git hooks for quality checks
+- **ESLint** – Pluggable JavaScript linter
+- **Prettier** – Opinionated code formatter
+- **TypeScript** – Static type checking
 
 ### Utilities
-- **python-dotenv** – Environment variable management
-- **structlog** – Structured logging
-- **tenacity** – Retry logic for external services
-- **httpx** – Modern HTTP client for testing
+- **dotenv** – Environment variable management
+- **node-fetch** – HTTP client for Node.js
 
 ---
 
@@ -634,9 +620,7 @@ cat > public/README.md <<'EOF'
 ## 🛠️ Tooling & Package Management
 
 ### Version Management
-- **pyenv** – Python version management (3.12+)
 - **nvm** – Node.js version management (22.21.1)
-- **uv** – Fast Python package installer (Rust-based, replaces pip)
 - **pnpm** – Fast, disk-efficient Node package manager
 
 ### System Requirements
@@ -674,9 +658,8 @@ cp frontend/.env.example frontend/.env.local
 **Backend:**
 ```bash
 cd backend
-./start.sh
-# API available at http://localhost:8000
-# OpenAPI docs at http://localhost:8000/docs
+pnpm dev
+# API available at http://localhost:3000
 ```
 
 **Frontend:**
@@ -691,8 +674,7 @@ pnpm dev
 **Backend:**
 ```bash
 cd backend
-source .venv/bin/activate
-pytest
+pnpm test
 ```
 
 **Frontend:**
@@ -707,14 +689,20 @@ pnpm test
 ```
 .
 ├── backend/
-│   ├── app/
-│   │   └── main.py          # FastAPI application
-│   ├── alembic/             # Database migrations
-│   ├── .venv/               # Python virtual environment
-│   ├── requirements.txt     # Python dependencies
-│   ├── pytest.ini           # Test configuration
-│   ├── ruff.toml           # Linter configuration
-│   └── start.sh            # Development server script
+│   ├── src/
+│   │   ├── app.ts            # Fastify application
+│   │   ├── server.ts         # Server entry point
+│   │   ├── routes/           # API routes
+│   │   ├── controllers/      # Route handlers
+│   │   ├── models/           # Data models
+│   │   ├── middleware/       # Request middleware
+│   │   └── utils/            # Utility functions
+│   ├── prisma/               # Prisma schema and migrations
+│   ├── .env.example          # Environment variables
+│   ├── package.json          # Node dependencies
+│   ├── tsconfig.json         # TypeScript configuration
+│   ├── jest.config.ts        # Test configuration
+│   └── .prettierrc           # Code formatting rules
 │
 ├── frontend/
 │   ├── src/
@@ -736,17 +724,16 @@ pnpm test
 ## 🔒 Security Best Practices
 
 - Environment variables for sensitive data (`.env` files gitignored)
-- CORS configured for development (update for production)
-- Type validation on API boundaries via Pydantic
-- SQL injection protection via SQLAlchemy ORM
-- Password hashing ready (add `passlib[bcrypt]` when needed)
+- Type validation on API boundaries via TypeScript
+- SQL injection protection via Prisma ORM
+- Password hashing ready (add `bcrypt` when needed)
 
 ---
 
 ## 📚 Next Steps
 
-1. **Database Setup**: Configure PostgreSQL and run migrations with `alembic upgrade head`
-2. **API Development**: Add routes in `backend/app/` and models in `backend/app/models/`
+1. **Database Setup**: Configure PostgreSQL and run migrations with `prisma migrate dev`
+2. **API Development**: Add routes in `backend/src/routes/` and handlers in `backend/src/controllers/`
 3. **Frontend Components**: Build UI in `frontend/src/components/`
 4. **Authentication**: Add JWT or session-based auth
 5. **Deployment**: Configure for Vercel (frontend) + Railway/Render (backend)
@@ -756,7 +743,6 @@ pnpm test
 ## 📦 Package Managers
 
 This project uses modern package managers for speed and efficiency:
-- **uv** for Python (50-100x faster than pip)
 - **pnpm** for Node.js (2-3x faster than npm, saves disk space)
 
 ---
@@ -765,64 +751,6 @@ Built with ❤️ using best practices for modern full-stack development
 EOF
 
 ok "public/README.md created"
-
-# ----------------------------------------------------
-# 2️⃣ Write a theme‑aware globals.css (light + dark)
-# ----------------------------------------------------
-step "Writing theme‑aware globals.css"
-
-cat > src/app/globals.css <<'EOF'
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-/* Dark mode overrides – automatically applied when the OS prefers dark */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-/* Global resets & base styles */
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: inherit;
-  margin: 0;
-  padding: 0;
-}
-
-/* Links inherit color */
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-/* Ensure browsers know we support dark mode (helps UI widgets) */
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
-}
-EOF
-
-ok "globals.css with light & dark theme variables written"
 
 # ---- custom landing page (overwrite the default page.tsx)
 cat > src/app/page.tsx <<'EOF'
@@ -853,14 +781,29 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="main-container">
+    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
       {/* Header */}
-      <header className="header">
-        <div className="header-title">
-          Next.js/TypeScript + Python Bootstrap
-        </div>
-        <div className="header-controls">
-          <button onClick={toggleInfo} className="readme-button">
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingBottom: '10px',
+          borderBottom: '10px solid #546',
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: '1.5rem' }}>
+          Next.js/TypeScript + Fastify Bootstrap
+        </h1>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            onClick={toggleInfo}
+            style={{
+              padding: '8px 16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
             {loading ? 'Loading...' : showInfo ? 'Hide README' : 'README'}
           </button>
         </div>
@@ -868,8 +811,15 @@ export default function LandingPage() {
 
       {/* README Section */}
       {showInfo && (
-        <section className="readme-section">
-          <div className="readme-content">
+        <section style={{ marginTop: 0 }}>
+          <div
+            style={{
+              padding: '15px',
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              lineHeight: '1.6',
+            }}
+          >
             {readmeContent || 'No content available'}
           </div>
         </section>
@@ -881,6 +831,9 @@ EOF
 
 # ---- create an empty folder for shared UI components
 mkdir -p src/components
+
+# ---- create a folder for shared styles
+mkdir -p src/styles
 
 # -------------------------------------------------------------
 # Define package.json scripts and dependencies
@@ -971,7 +924,7 @@ import Home from '@/app/page';
 
 test('renders landing page', () => {
   render(<Home />);
-  expect(screen.getByText(/Next.js\/TypeScript \+ Python Bootstrap/i)).toBeInTheDocument();
+  expect(screen.getByText(/Next.js\/TypeScript \+ Fastify Bootstrap/i)).toBeInTheDocument();
 });
 EOF
 
@@ -1070,7 +1023,7 @@ EOF
 
 # ---- frontend env example
 cat > .env.example <<'EOF'
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:3000
 EOF
 
 # ---- next-env.d.ts
@@ -1096,7 +1049,6 @@ echo -e "  • Name:     ${BOLD}$PROJECT_NAME${NC}"
 echo -e "  • Location: ${DIM}$PROJECT_ROOT${NC}"
 echo -e "  • Node:     $(node -v)"
 echo -e "  • pnpm:     $(pnpm --version)"
-echo -e "  • Python:   $(python3 --version | awk '{print $2}')"
 echo -e "  • Time:     ${ELAPSED}s"
 echo
 echo -e "${BOLD}Next steps:${NC}"
@@ -1105,7 +1057,7 @@ echo -e "     ${DIM}cp backend/.env.example backend/.env${NC}"
 echo -e "     ${DIM}cp frontend/.env.example frontend/.env.local${NC}"
 echo
 echo -e "  2. Start development servers:"
-echo -e "     ${DIM}cd $PROJECT_ROOT/backend && ./start.sh${NC}"
+echo -e "     ${DIM}cd $PROJECT_ROOT/backend && pnpm dev${NC}"
 echo -e "     ${DIM}cd $PROJECT_ROOT/frontend && pnpm dev${NC}"
 echo
 if [[ "${NEEDS_RELOAD:-false}" == "true" ]]; then
