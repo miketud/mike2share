@@ -12,6 +12,8 @@
 -
 
 # NUTRITION | 2/19/26
+- ethylene producing produce, ethylene sensitive, moisture loving, moisture averse
+- recipes with nutrition and video auto calculated
 
 # HELP-NEARBY | 2/19/26
 - non-profit = non-people
