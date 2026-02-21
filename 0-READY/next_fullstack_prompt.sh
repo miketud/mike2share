@@ -187,9 +187,11 @@ fi
 # =================================================
 section "NODE SETUP"
 
-# Source NVM if it exists (needed for both new installs and existing setups)
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+# Only source NVM if it's already installed (not on fresh install)
+if [[ -f "$HOME/.nvm/nvm.sh" ]]; then
+  export NVM_DIR="$HOME/.nvm"
+  . "$NVM_DIR/nvm.sh"
+fi
 
 if ! command -v nvm &>/dev/null; then
   echo -e "${YELLOW}NVM (Node Version Manager) will be installed.${NC}"
@@ -199,9 +201,11 @@ if ! command -v nvm &>/dev/null; then
     exit 1
   fi
   step "Installing NVM"
+  export NVM_DIR="$HOME/.nvm"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-  # Re-source after fresh install
-  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  # Re-source after fresh install (NVM sets NVM_DIR in this shell)
+  export NVM_DIR="$HOME/.nvm"
+  . "$NVM_DIR/nvm.sh"
   ok "NVM installed"
 fi
 
