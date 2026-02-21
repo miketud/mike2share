@@ -203,9 +203,11 @@ if ! command -v nvm &>/dev/null; then
   step "Installing NVM"
   export NVM_DIR="$HOME/.nvm"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-  # Re-source after fresh install (NVM sets NVM_DIR in this shell)
+  # Source the shell config to pick up NVM changes
+  source "$SHELL_RC"
+  # Re-source NVM explicitly
   export NVM_DIR="$HOME/.nvm"
-  . "$NVM_DIR/nvm.sh"
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
   ok "NVM installed"
 fi
 
